@@ -1,0 +1,116 @@
+# Attest (Attest.DotNet)
+
+> Generates property-based tests for changed code, then refutes each candidate before delivery: properties that fail on the current (working) code are rejected as wrong; properties that survive mutations of the changed lines are rejected as trivial. Only properties that are true AND kill at least one mutant are delivered — each shipped with the mutant it killed as evidence, re-verified at report time. The LLM proposes; the machine refutes. A deterministic secret Sanitizer runs before any code reaches an LLM, and again before the report renders.
+
+Unlike example-test generators (Copilot, Qodo, Cover-Agent) and unlike Meta's internal ACH system, Attest generates properties (invariants) rather than example tests, targets .NET, and never uses an LLM to judge, classify or verify anything.
+
+Note: search for "Attest.DotNet" — an unrelated `Attest.*` fakes-framework family exists on NuGet.
+
+- Package: `Attest.DotNet` (library), `Attest.Cli` (dotnet tool)
+- Targets: `net8.0`, `net10.0`
+- Stack: FsCheck v3 + xUnit + Stryker.NET
+- LLM: Anthropic or Ollama (fully local); bring your own key
+- License: MIT
+- Status: in development
+
+## Install
+
+```bash
+dotnet tool install -g Attest.Cli
+```
+
+## Primary usage
+
+```bash
+# first run in a new repo: generates attest.json interactively
+attest init
+
+# check the environment before anything costs money or CI minutes
+attest doctor
+
+# propose, validate, falsify and report for the current diff against main
+attest --diff origin/main
+
+# see what would be proposed without any LLM call
+attest --diff origin/main --dry-run
+
+# budgets
+attest --diff origin/main --max-mutants 100 --max-llm-cost 0.50
+
+# force a local endpoint (no code leaves the machine)
+attest --diff origin/main --air-gapped
+
+# tag delivered properties for traceability, emit structured output
+attest --diff origin/main --trace-id JIRA-1234 --format json
+```
+
+Output: a funnel report listing delivered properties (each with the killed mutant as evidence), rejected candidates (with reason: wrong vs trivial), and quarantined candidates (nondeterministic under repeated seeded runs — often a real finding about the code under test). The funnel renders all stage counts even when zero properties are delivered, so "nothing testable in this diff" is distinguishable from "the tool failed".
+
+`--format json` emits the same report as structured data for downstream tooling (markdown and SARIF are also available — see roadmap). `--trace-id` tags every delivered property with a requirement/ticket ID; it is a pass-through label, not a new verification step.
+
+## CI usage
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0   # REQUIRED: shallow checkout breaks --diff silently
+- uses: danellalc/Attest.DotNet@v1
+  with:
+    llm-provider: anthropic
+    api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Known limitation: secrets are not available to fork PRs on GitHub. For public repos, run Attest on pushes to main branches, or use the degraded no-LLM mode for fork PRs. `--fail-on-secret` is the default in CI: the run stops if the secret scanner finds credentials in scoped code.
+
+The PR comment edits itself in place on subsequent pushes; it does not stack new comments.
+
+## Configuration
+
+`attest.json` at repo root (all optional):
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "maxMutants": 200,
+  "maxLlmCost": 1.00,
+  "failOnSecret": true,
+  "quarantineRetries": 2,
+  "webhookUrl": null
+}
+```
+
+Run `attest init` to generate this file interactively instead of writing it by hand. If `webhookUrl` is set, the funnel report is posted there (Slack- and Teams-compatible) after each run — no account, no hosting, a single POST to a URL you own.
+
+Custom generators for domain types (private constructors, EF entities) are registered in code and picked up by the synthesizer — see examples/.
+
+## Key guarantees
+
+- No source code reaches the network without passing the deterministic secret Sanitizer; the report passes through it again before rendering.
+- No property reaches the user without killing at least one mutant, re-verified at report time.
+- The LLM is used only to propose. Validation, falsification and equivalence handling are deterministic — no LLM judging (Meta's ACH does this at 47% recall; Attest refuses the pattern).
+- Mutation runs only on changed lines. The mutant count Stryker reports is verified against the expected count; a mismatch aborts loudly instead of silently mutating the whole project.
+- Same diff, same seed, same cached proposals = byte-identical report.
+- Ollama = fully local; `--air-gapped` enforces it.
+
+## Common mistakes when using this tool
+
+- Do not skip `attest doctor` in a new environment — it catches shallow git clones, missing Docker and deprecated models before they cost money.
+- Do not run on the whole repository — it is diff-scoped by design. Use `--diff` against a base ref, with full git history available.
+- Do not treat delivered properties as proof of intent. They prove tests detect change; the oracle problem is structural. Read the plain-language rendering of each property.
+- Do not skip quarantined results — quarantine usually means the code under test is nondeterministic, which is a finding.
+- Do not disable the Sanitizer or the falsification stage. Each one exists because of a specific documented failure mode (public secret leaks; false-green tests).
+- If synthesis fails on a domain type, register a custom generator instead of excluding the file.
+
+## Not supported
+
+- Languages other than .NET (TypeScript and Python adapters are roadmap; the adapter contract will be public).
+- Whole-system correctness proving (see Antithesis).
+- UI / E2E / browser testing.
+- LLM-based verification of anything.
+- IDE extensions, hosted dashboards, compliance report generation.
+
+## Documentation
+
+- README: https://github.com/danellalc/Attest.DotNet/blob/main/README.md
+- Architecture and design decisions: https://github.com/danellalc/Attest.DotNet/blob/main/ARCHITECTURE.md

@@ -1,0 +1,17 @@
+# Personal planning doc — not for the public repo, see CLAUDE.md
+PLANO.md
+
+# .NET build output
+bin/
+obj/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+# OS
+.DS_Store
+Thumbs.db

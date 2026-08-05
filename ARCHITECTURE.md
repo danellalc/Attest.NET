@@ -1,0 +1,142 @@
+# Architecture
+
+## Packaging
+
+Four projects internally. **Two packages published.**
+
+```
+Attest.DotNet     the library: the loop bound to FsCheck + Stryker.NET
+Attest.Cli        dotnet tool: attest --diff, doctor, CI integration, PR comments
+```
+
+`Attest.Core` (the language-agnostic loop) ships inside `Attest.DotNet` — it becomes its own package only when a second adapter exists to consume it. Do not pre-fragment for a future that may not arrive.
+
+## Pipeline
+
+Everything happens in seven stages, in order. New code belongs to exactly one of them.
+
+```
+git diff
+  1. DiffScope         changed files, changed lines, owning methods, direct callers
+  2. Sanitizer         deterministic secret scan + redaction, BEFORE anything reaches an LLM
+  3. Proposer          LLM proposes candidate properties for the sanitized, scoped code
+  4. Synthesizer       candidates become compilable FsCheck tests in a scratch project
+  5. Validator         run against current code — failures are WRONG properties, rejected
+  6. Falsifier         Stryker.NET mutates only the changed lines; survivors re-run
+                       per mutant — properties that stay green are TRIVIAL, rejected
+  7. Evidence          survivors packaged with the mutant(s) they killed; the report
+                       passes through the Sanitizer AGAIN before rendering
+```
+
+Stages 1, 2, 4, 5, 6, 7 are deterministic. Stage 3 is the only place an LLM exists.
+
+**Two boundaries, both absolute:**
+
+- **The trust boundary** sits between stage 3 and everything else. Nothing the LLM says is believed; stages 5 and 6 exist to refute it.
+- **The privacy boundary** sits at stage 2. No source code reaches the network without passing the Sanitizer, and no report reaches a PR without passing it again. Diff scoping pulls in caller code the author never looked at in this PR — a composition root with a real connection string is the canonical hazard — which is why sanitization is a stage, not an option.
+
+---
+
+## The hard problems
+
+### The Synthesizer is the biggest risk in the project
+
+"LLM text becomes a compilable FsCheck test" works for records and DTOs and probably breaks on real domain types: private constructors, EF-attached entities, DI-resolved services. The panel that reviewed this design called it the single most uncertain piece, and the plan treats it that way:
+
+- v1 strategy: reflection-based construction with per-property overrides, honest failure (`AttestUnsynthesizableTypeException`, naming the type and why) when construction is impossible.
+- **A custom-generator escape hatch is v1 scope, not a nice-to-have.** Every serious PBT tool has one; a user must be able to register `Arb`/`Gen` instances for their domain types and have the Synthesizer pick them up. Without this, the tool dies on first contact with a real codebase.
+- Generator synthesis for domain types is shared territory with EFCore.AutoSeed (same author, same problem: "construct a valid `Order`"); extraction of the common core is roadmap, not v1.
+
+### Diff scoping that actually holds
+
+Scope too narrow and properties miss the changed behavior; too wide and you re-inherit whole-repo mutation cost.
+
+v1 rule: changed methods plus their direct callers **within the solution** — not just the same project. Layered architecture (Web → Application → Domain across projects) is the .NET default, and a same-project-only rule would miss the most common case. `internal` callers count; `InternalsVisibleTo` is respected. A configurable ceiling on mutant count (`--max-mutants`, default 200) with a **named report** of anything excluded when it trips — silent truncation is a lie.
+
+### Stryker.NET is a dependency with known sharp edges
+
+Stryker's own `--since` (diff) mode has open issues where it silently falls back to mutating the whole project. Attest does not delegate scoping to Stryker: the Falsifier computes the file/line mutation set itself and passes an explicit mutate filter, then **verifies the mutant count Stryker reports against its own expectation** — a mismatch aborts with a named error rather than silently burning an hour of CI. Embedding Stryker programmatically is the project's biggest technical bet, which is why it is a go/no-go spike in week 1, not an assumption inside a two-week phase.
+
+### The oracle problem is structural
+
+Stage 5 has a blind spot: if the current code has a bug and the LLM proposes a property that *encodes the bug*, the property passes validation, and mutation may not catch it either. No mutation score fixes this — mutation proves sensitivity to change, never correctness of intent.
+
+Attest's position, stated in the README next to the promise (not buried here): delivered properties attest that tests detect change. Intent is judged by the human, which is why every delivered property is rendered in plain language. The v2 spec mode (below) attacks this from the other side: when the human writes the intended rule and Attest formalizes it, intent enters the loop from the start.
+
+### Equivalent mutants — without an LLM judge
+
+Some mutants don't change behavior. Meta's ACH uses an LLM to classify these — at 47% recall by their own measurement, which is exactly the "LLM judges LLM" pattern this project forbids. Attest's rule is simpler and deterministic: a property is rejected only if it kills **zero** mutants, never for missing some. One verified kill is proof enough; equivalent mutants then cost compute, not correctness.
+
+### Flaky properties → quarantine
+
+A property involving time, I/O or async can pass validation and fail falsification for environmental reasons. Stage 5 runs every candidate **twice with different seeds**; inconsistent results quarantine the property with a named reason rather than rejecting or delivering it. Quarantine is a first-class outcome — it frequently indicates real nondeterminism in the user's code, which is itself a finding (and becomes a headline feature in v2).
+
+### Cost control
+
+One proposal call per changed-file batch, no retry loops, no agentic wandering. Token spend printed in the report. `--max-llm-cost` mirrors `--max-mutants`. `--dry-run` shows what would be proposed without calling anything. Model deprecation is a named risk: provider/model is config, not code, and `attest doctor` checks the configured model still exists before anything costs money.
+
+### The zero-delivery case is a designed outcome
+
+"0 properties delivered" must distinguish *your diff had nothing property-testable* (config-only change, plumbing) from *the tool failed*. The funnel report renders every stage's counts even when the end is zero, and `attest doctor` exists so environmental failure is caught before the run, not inferred from an empty result.
+
+---
+
+## Design decisions
+
+### Why properties instead of example tests
+
+Example generators inherit the code's bugs — they assert what the code does. Properties assert what must hold regardless of implementation: idempotency, bounds, round-trips, conservation. That is also precisely the class that catches the "hard 20%" (races, async, edge states) example tests structurally miss — and one property replaces dozens of examples, keeping the mutation budget small. Among all propose-then-refute systems found (ACH, Mutahunter, Cover-Agent), none generates properties. This is the moat that outlasts the loop itself.
+
+### Why the LLM only proposes
+
+[Vikram, Lemieux & Padhye (ISSTA 2023)](https://arxiv.org/abs/2307.04346) measured what LLMs do when writing property tests unsupervised: GPT-4 produced sound, non-trivial properties for only 21% of extractable API properties tested — the rest split between trivial (asserts nothing meaningful) and unsound (actually false). Both failure modes are machine-detectable — wrong properties fail on working code, trivial ones survive mutants. So the LLM gets the one job machines can't do (hypothesis generation) and machines get the one job LLMs can't be trusted with (verification). ACH's 47%-recall LLM judge is the counterexample that proves the rule.
+
+### Why the Sanitizer is a stage, not a flag
+
+BYOK is a vendor-neutrality decision; it is not a privacy guarantee. Scoped code crosses the network at stage 3, and the Evidence report becomes a public, permanent PR comment. A secret that leaks through this pipeline doesn't leak once — it becomes searchable history. Deterministic scanning (pattern + entropy, no network) fits the "everything deterministic except stage 3" rule, runs twice (before the LLM, before the report), and `--fail-on-secret` defaults on in CI.
+
+### Why diff-scoped mutation
+
+Whole-repo mutation is infeasible at scale — [Petrović & Ivanković (Google, ICSE-SEIP 2018)](https://research.google/pubs/archive/46584.pdf) concluded repo-wide mutation scores are both too expensive to compute and not actionable for developers at their scale. A real-world [8-hour Stryker.NET run on a ~20k-line, ~500-file project](https://github.com/stryker-mutator/stryker-net/discussions/3013) confirms the same wall shows up in .NET specifically. The diff is small, fresh in the author's head, and the only code whose correctness is in question today.
+
+### Why evidence is re-verified, not stored
+
+The report claims "this property killed this mutant". Attest re-runs that exact pair before emitting. A tool whose entire pitch is "carry proof" cannot afford a stale one.
+
+### Why two LLM providers at v1, not three
+
+Anthropic (hosted) and Ollama (fully local, air-gap capable) cover both trust postures. A third provider is config plumbing that can wait for an issue; cutting it protects the schedule where the real risk lives (the Synthesizer).
+
+### Why FsCheck over CsCheck for v1
+
+FsCheck v3 is the canonical .NET property framework with mature xUnit integration. CsCheck (C#-first, strong shrinking, parallel testing support) is the planned second synthesis target — framework-specific emission lives behind one interface in the Synthesizer for exactly that reason, and CsCheck's parallel testing is the intended vehicle for v2 concurrency properties.
+
+---
+
+## Roadmap
+
+**v1 — the loop, .NET**
+Sanitizer, diff scoping (solution-wide callers), LLM proposal (Anthropic, Ollama), FsCheck synthesis with custom-generator escape hatch, validation, diff-scoped falsification with mutant-count verification, quarantine, evidence with re-verified kills, funnel report (including the zero case), `attest --diff`, `attest init`, `attest doctor`, GitHub Action with fork-PR and fetch-depth guidance documented.
+
+**v1.x — quick wins**
+SARIF and JSON output formats (`--format`) — code scanning and downstream tooling respectively. `--max-llm-cost`. PR comments that edit in place instead of stacking (the #1 complaint against existing PR bots). Signed evidence export (JSON). `--trace-id`: pass-through requirement/ticket tag on every delivered property, no new verification. Webhook notifications (Slack/Teams-compatible — a single POST to a URL the user owns, no account, no hosting). **`--compare-suite`: run the Falsifier against the tests the repo already has — "do your existing tests kill mutants?" answered with a number, no LLM involved.** That last one is close to a standalone entry product and the strongest possible demo material.
+
+**v2 — depth**
+**`attest.lock` — properties as a living contract:** survivors accumulate in a versioned file; every future diff re-runs them; a broken accumulated property is either a regression or a conscious business-rule change. This turns a PR tool into the project's invariant guardian, and retention compounds with use.
+Stateful/model-based proposals and concurrency properties via CsCheck parallel testing (the real "hard 20%"). Quarantine analytics: "your code is nondeterministic here" as a first-class finding. Incremental mutation cache across pushes in the same PR. NUnit/MSTest synthesis targets. Shared generator core with EFCore.AutoSeed. "% of diff proven" as the honest metric replacing coverage.
+
+**v3 — intent and reach**
+**Spec mode:** the developer writes the business rule in natural language ("a cancelled order can never be invoiced"); Attest formalizes, validates and maintains the corresponding property. Intent enters the loop from the human side — the structural answer to the oracle problem.
+Diff risk ranking: changed lines whose mutants nothing killed (not even the repo's own suite) flagged as unprotected — free byproduct of what the pipeline already computes.
+`Attest.TypeScript` (fast-check + StrykerJS); the adapter contract goes public as an open standard, not a feature.
+
+**v4 — learning**
+Opt-in local feedback: rejected candidates (labeled wrong/trivial) tune the Proposer prompt per repo. Better on *your* codebase with use — no cloud, no telemetry, cache-local. `Attest.Python`.
+
+### Explicitly out of scope
+
+Whole-repo mutation. E2E/browser testing. Distributed-system correctness proving. LLM-based verification of anything. IDE extensions (CLI + Action only). Compliance-report generation (AIBOM, SOC2 — that is a different product). Hosted service, dashboards, org-wide spend tracking. Style or architecture opinions — Attest speaks only when it has proof, and that restraint is the brand.
+
+### Named risks beyond the code
+
+Provider terms-of-service vs. MIT-licensed output; real CI cost of Stryker runs (not just LLM tokens); model deprecation breaking the Proposer (mitigated: model is config, doctor checks it); an incumbent adding propose-then-refute in a changelog — realistic window of 6–12 months after any visible traction, which is why the durable assets are the property focus, the fully-local path, and the open adapter contract; solo-maintainer bus factor for a tool running inside other people's CI.
