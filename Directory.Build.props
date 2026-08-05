@@ -11,7 +11,7 @@
   <PropertyGroup>
     <Authors>Luiz Cláudio Danella</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/danellalc/Attest.DotNet</RepositoryUrl>
+    <RepositoryUrl>https://github.com/danellalc/Attest.NET</RepositoryUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
   </PropertyGroup>
 
