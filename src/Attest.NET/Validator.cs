@@ -1,3 +1,4 @@
+using System.Xml;
 using System.Xml.Linq;
 using Attest.Core;
 
@@ -33,7 +34,16 @@ public sealed class Validator : IValidator
             if (!File.Exists(trxPath))
                 throw new AttestValidationFailedException(test.Candidate.Name, runResult.CombinedOutput);
 
-            results = ParseResults(trxPath);
+            try
+            {
+                results = ParseResults(trxPath);
+            }
+            catch (XmlException ex)
+            {
+                throw new AttestValidationFailedException(
+                    test.Candidate.Name,
+                    $"The TRX result file at '{trxPath}' could not be parsed as XML: {ex.Message}\n\n{runResult.CombinedOutput}");
+            }
         }
         finally
         {

@@ -127,9 +127,9 @@ public sealed class Falsifier : IFalsifier
                 {
                     Directory.Delete(directory, recursive: true);
                 }
-                catch (IOException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    // Best effort: an old report folder still locked by a lingering process is not fatal.
+                    // Best effort: an old report folder still locked or read-only is not fatal.
                 }
             }
         }

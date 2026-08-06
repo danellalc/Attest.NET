@@ -28,10 +28,22 @@ public class SynthesizerTests
     {
         var candidate = new PropertyCandidate(invalidName, "d", "[Property] public bool X() => true;");
         var synthesizer = new Synthesizer();
+        var scratchRoot = Path.Combine(Path.GetTempPath(), "attest-scratch");
+        var scratchEntriesBefore = Directory.Exists(scratchRoot) ? Directory.GetDirectories(scratchRoot).ToHashSet() : [];
 
+        // "irrelevant.csproj" does not exist either, so a pass here does not by itself prove
+        // ValidateCandidateName ran before the File.Exists(targetProjectPath) check: every
+        // Synthesizer failure mode throws the same AttestSynthesisFailedException with the
+        // same fixed Message and the same CandidateName, so BuildOutput (the detail Synthesizer
+        // passes as the exception's second constructor argument) is what pins the failure to
+        // the name-validation path specifically.
         var exception = await Assert.ThrowsAsync<AttestSynthesisFailedException>(
             () => synthesizer.SynthesizeAsync(candidate, "irrelevant.csproj", CancellationToken.None));
 
         Assert.Equal(invalidName, exception.CandidateName);
+        Assert.Contains("valid C# identifier", exception.BuildOutput);
+
+        var scratchEntriesAfter = Directory.Exists(scratchRoot) ? Directory.GetDirectories(scratchRoot).ToHashSet() : [];
+        Assert.Equal(scratchEntriesBefore, scratchEntriesAfter);
     }
 }

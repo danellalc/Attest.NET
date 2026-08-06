@@ -153,14 +153,22 @@ public class ExitCriterionTests
                 {
                     falsifications.Add(await falsifier.FalsifyAsync(synthesized, Scope, CancellationToken.None));
                 }
-                catch (AttestFalsificationFailedException) when (candidate == Flaky)
+                catch (AttestFalsificationFailedException ex)
+                    when (candidate == Flaky && !ex.RunOutput.Contains("Mutation report at", StringComparison.Ordinal))
                 {
                     // Another shape of the same documented limitation (see the class doc
                     // comment): Stryker's own initial test run re-evaluates CoinFlip fresh,
                     // so --break-on-initial-test-failure can abort the whole mutation run for
-                    // this candidate specifically. No falsification result is recorded for it,
-                    // which EvidenceReporter already treats as trivial-rejected, same as a
-                    // real zero-kill result.
+                    // this candidate specifically, and Falsifier.FalsifyAsync throws because no
+                    // report file was ever produced (RunOutput is the raw process output, not a
+                    // "Mutation report at '...'" parse-failure message). No falsification result
+                    // is recorded for it, which EvidenceReporter already treats as
+                    // trivial-rejected, same as a real zero-kill result.
+                    //
+                    // The RunOutput check matters: Falsifier also throws this same exception
+                    // type when a report WAS produced but failed to parse or deserialized to
+                    // null (see Falsifier.ParseReportAsync). That is a different, real bug and
+                    // must still fail this test instead of being swallowed as "expected".
                     _output.WriteLine($"Falsifier aborted for the flaky candidate (expected, see class doc comment): {candidate.Name}");
                 }
             }
