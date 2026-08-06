@@ -17,17 +17,28 @@ public sealed class Validator : IValidator
         var scratchDirectory = Path.GetDirectoryName(test.ScratchProjectPath)!;
         const string trxFileName = "validate.trx";
 
-        var runResult = await ProcessRunner.RunAsync(
-            "dotnet",
-            $"test \"{test.ScratchProjectPath}\" --no-build -c Release --logger \"trx;LogFileName={trxFileName}\"",
-            scratchDirectory,
-            cancellationToken).ConfigureAwait(false);
+        var directoryLock = ScratchDirectoryLocks.For(scratchDirectory);
+        await directoryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-        var trxPath = Path.Combine(scratchDirectory, "TestResults", trxFileName);
-        if (!File.Exists(trxPath))
-            throw new AttestValidationFailedException(test.Candidate.Name, runResult.CombinedOutput);
+        Dictionary<string, (string Outcome, string? Output)> results;
+        try
+        {
+            var runResult = await ProcessRunner.RunAsync(
+                "dotnet",
+                $"test \"{test.ScratchProjectPath}\" --no-build -c Release --logger \"trx;LogFileName={trxFileName}\"",
+                scratchDirectory,
+                cancellationToken).ConfigureAwait(false);
 
-        var results = ParseResults(trxPath);
+            var trxPath = Path.Combine(scratchDirectory, "TestResults", trxFileName);
+            if (!File.Exists(trxPath))
+                throw new AttestValidationFailedException(test.Candidate.Name, runResult.CombinedOutput);
+
+            results = ParseResults(trxPath);
+        }
+        finally
+        {
+            directoryLock.Release();
+        }
 
         var firstPassed = results.TryGetValue(test.FirstSeedTestName, out var first) && first.Outcome == "Passed";
         var secondPassed = results.TryGetValue(test.SecondSeedTestName, out var second) && second.Outcome == "Passed";

@@ -25,49 +25,64 @@ public sealed class Synthesizer : ISynthesizer
     {
         var targetFramework = DetectTargetFramework(targetProjectPath);
         var testClassName = $"Scratch_{candidate.Name}";
-        var scratchDirectory = CreateScratchDirectory(candidate, testClassName);
-
-        await File.WriteAllTextAsync(
-            Path.Combine(scratchDirectory, "Directory.Build.props"),
-            IsolatingBuildProps,
-            cancellationToken).ConfigureAwait(false);
-
+        var scratchDirectory = ComputeScratchDirectory(candidate, testClassName);
         var csprojPath = Path.Combine(scratchDirectory, $"{testClassName}.csproj");
-        await File.WriteAllTextAsync(
-            csprojPath,
-            BuildCsproj(targetFramework, targetProjectPath),
-            cancellationToken).ConfigureAwait(false);
+        var builtAssemblyPath = Path.Combine(scratchDirectory, "bin", "Release", targetFramework, $"{testClassName}.dll");
 
-        await File.WriteAllTextAsync(
-            Path.Combine(scratchDirectory, $"{testClassName}.cs"),
-            BuildTestFile(testClassName, candidate),
-            cancellationToken).ConfigureAwait(false);
-
-        var buildResult = await ProcessRunner.RunAsync(
-            "dotnet",
-            $"build \"{csprojPath}\" -c Release",
-            scratchDirectory,
-            cancellationToken).ConfigureAwait(false);
-
-        if (!buildResult.Succeeded)
-            throw new AttestSynthesisFailedException(candidate.Name, buildResult.CombinedOutput);
-
-        return new SynthesizedTest(
+        var synthesizedTest = new SynthesizedTest(
             candidate,
             csprojPath,
             FirstSeedTestName: $"{testClassName}.{FirstSeedClassName(candidate)}.{candidate.Name}",
             SecondSeedTestName: $"{testClassName}.{SecondSeedClassName(candidate)}.{candidate.Name}");
+
+        var directoryLock = ScratchDirectoryLocks.For(scratchDirectory);
+        await directoryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(builtAssemblyPath))
+                return synthesizedTest;
+
+            Directory.CreateDirectory(scratchDirectory);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(scratchDirectory, "Directory.Build.props"),
+                IsolatingBuildProps,
+                cancellationToken).ConfigureAwait(false);
+
+            await File.WriteAllTextAsync(
+                csprojPath,
+                BuildCsproj(targetFramework, targetProjectPath),
+                cancellationToken).ConfigureAwait(false);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(scratchDirectory, $"{testClassName}.cs"),
+                BuildTestFile(testClassName, candidate),
+                cancellationToken).ConfigureAwait(false);
+
+            var buildResult = await ProcessRunner.RunAsync(
+                "dotnet",
+                $"build \"{csprojPath}\" -c Release",
+                scratchDirectory,
+                cancellationToken).ConfigureAwait(false);
+
+            if (!buildResult.Succeeded)
+                throw new AttestSynthesisFailedException(candidate.Name, buildResult.CombinedOutput);
+
+            return synthesizedTest;
+        }
+        finally
+        {
+            directoryLock.Release();
+        }
     }
 
     private static string FirstSeedClassName(PropertyCandidate candidate) => $"{candidate.Name}Tests_Seed1";
     private static string SecondSeedClassName(PropertyCandidate candidate) => $"{candidate.Name}Tests_Seed2";
 
-    private static string CreateScratchDirectory(PropertyCandidate candidate, string testClassName)
+    private static string ComputeScratchDirectory(PropertyCandidate candidate, string testClassName)
     {
         var contentHash = ComputeContentHash(candidate.Name + candidate.SourceCode);
-        var directory = Path.Combine(Path.GetTempPath(), "attest-scratch", $"{testClassName}-{contentHash}");
-        Directory.CreateDirectory(directory);
-        return directory;
+        return Path.Combine(Path.GetTempPath(), "attest-scratch", $"{testClassName}-{contentHash}");
     }
 
     private static string ComputeContentHash(string content)

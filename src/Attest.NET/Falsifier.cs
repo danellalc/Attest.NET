@@ -22,17 +22,29 @@ public sealed class Falsifier : IFalsifier
         var scratchDirectory = Path.GetDirectoryName(test.ScratchProjectPath)!;
         var mutateArguments = string.Join(' ', scope.FilePaths.Select(path => $"-m \"**/{Path.GetFileName(path)}\""));
 
-        var runResult = await ProcessRunner.RunAsync(
-            "dotnet-stryker",
-            $"{mutateArguments} -r Json --break-on-initial-test-failure",
-            scratchDirectory,
-            cancellationToken).ConfigureAwait(false);
+        var directoryLock = ScratchDirectoryLocks.For(scratchDirectory);
+        await directoryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-        var reportPath = FindLatestReport(scratchDirectory);
-        if (reportPath is null)
-            throw new AttestValidationFailedException(test.Candidate.Name, runResult.CombinedOutput);
+        StrykerReport report;
+        try
+        {
+            var runResult = await ProcessRunner.RunAsync(
+                "dotnet-stryker",
+                $"{mutateArguments} -r Json --break-on-initial-test-failure",
+                scratchDirectory,
+                cancellationToken).ConfigureAwait(false);
 
-        var report = await ParseReportAsync(reportPath, cancellationToken).ConfigureAwait(false);
+            var reportPath = FindLatestReport(scratchDirectory);
+            if (reportPath is null)
+                throw new AttestFalsificationFailedException(test.Candidate.Name, runResult.CombinedOutput);
+
+            report = await ParseReportAsync(reportPath, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            directoryLock.Release();
+        }
+
         var scopedFileNames = scope.FilePaths.Select(Path.GetFileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var allTestedMutants = report.Files
