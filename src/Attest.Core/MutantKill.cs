@@ -7,5 +7,6 @@ namespace Attest.Core;
 /// <param name="MutatorName">The mutation operator applied, e.g. "Equality mutation".</param>
 /// <param name="FilePath">Absolute path to the mutated source file.</param>
 /// <param name="Line">Line where the mutant was introduced.</param>
+/// <param name="Column">Column where the mutant was introduced, to disambiguate two mutants on the same line.</param>
 /// <param name="Replacement">The mutated code that replaced the original.</param>
-public sealed record MutantKill(string MutatorName, string FilePath, int Line, string Replacement);
+public sealed record MutantKill(string MutatorName, string FilePath, int Line, int Column, string Replacement);

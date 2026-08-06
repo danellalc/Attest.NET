@@ -6,9 +6,14 @@ namespace Attest.Core;
 /// </summary>
 public sealed class AttestFalsificationFailedException : AttestException
 {
+    /// <summary>Name of the candidate whose falsification run produced no report.</summary>
     public string CandidateName { get; }
+
+    /// <summary>The mutation run's own output, for diagnosis.</summary>
     public string RunOutput { get; }
 
+    /// <param name="candidateName">Name of the candidate whose falsification run produced no report.</param>
+    /// <param name="runOutput">The mutation run's own output, for diagnosis.</param>
     public AttestFalsificationFailedException(string candidateName, string runOutput)
         : base($"Candidate '{candidateName}' produced no mutation report when falsified.")
     {

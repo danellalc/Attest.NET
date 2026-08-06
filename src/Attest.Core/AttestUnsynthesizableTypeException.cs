@@ -7,8 +7,11 @@ namespace Attest.Core;
 /// </summary>
 public sealed class AttestUnsynthesizableTypeException : AttestException
 {
+    /// <summary>The type no generator could be constructed for.</summary>
     public string TypeName { get; }
 
+    /// <param name="typeName">The type no generator could be constructed for.</param>
+    /// <param name="reason">Why construction was impossible.</param>
     public AttestUnsynthesizableTypeException(string typeName, string reason)
         : base($"Cannot synthesize a generator for type '{typeName}': {reason}")
     {

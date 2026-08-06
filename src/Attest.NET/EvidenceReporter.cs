@@ -24,8 +24,15 @@ public sealed class EvidenceReporter : IEvidenceReporter
         MutationScope scope,
         CancellationToken cancellationToken)
     {
-        var validationByCandidate = validations.ToDictionary(v => v.Test.Candidate);
-        var falsificationByCandidate = falsifications.ToDictionary(f => f.Test.Candidate);
+        // GroupBy + first, not ToDictionary: two value-equal candidates (the same proposal
+        // appearing twice) are an expected input, not an error, given the Synthesizer's own
+        // scratch-directory dedup is built around identical candidates colliding on purpose.
+        var validationByCandidate = validations
+            .GroupBy(v => v.Test.Candidate)
+            .ToDictionary(g => g.Key, g => g.First());
+        var falsificationByCandidate = falsifications
+            .GroupBy(f => f.Test.Candidate)
+            .ToDictionary(g => g.Key, g => g.First());
 
         var delivered = new List<DeliveredProperty>();
         var rejected = new List<RejectedCandidate>();
@@ -34,7 +41,7 @@ public sealed class EvidenceReporter : IEvidenceReporter
         foreach (var candidate in proposed)
         {
             if (!validationByCandidate.TryGetValue(candidate, out var validation))
-                continue;
+                throw new AttestUnaccountedCandidateException(candidate.Name);
 
             if (validation.Outcome == ValidationOutcome.Inconsistent)
             {
@@ -60,8 +67,7 @@ public sealed class EvidenceReporter : IEvidenceReporter
             }
 
             var reverified = await _falsifier.FalsifyAsync(falsification.Test, scope, cancellationToken).ConfigureAwait(false);
-            var stillKilled = falsification.KilledMutants.FirstOrDefault(original =>
-                reverified.KilledMutants.Any(fresh => Matches(original, fresh)));
+            var stillKilled = falsification.KilledMutants.FirstOrDefault(reverified.KilledMutants.Contains);
 
             if (stillKilled is null)
             {
@@ -83,10 +89,4 @@ public sealed class EvidenceReporter : IEvidenceReporter
     /// that this decision holds for every possible set of kills: zero kills is always trivial.
     /// </summary>
     internal static bool IsTrivial(FalsificationResult falsification) => falsification.KilledMutants.Count == 0;
-
-    private static bool Matches(MutantKill original, MutantKill fresh) =>
-        original.MutatorName == fresh.MutatorName
-        && original.FilePath == fresh.FilePath
-        && original.Line == fresh.Line
-        && original.Replacement == fresh.Replacement;
 }

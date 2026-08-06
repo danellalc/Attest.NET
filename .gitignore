@@ -1,10 +1,13 @@
-# Personal docs — not for the public repo
+# Personal docs, not for the public repo
 PLANO.md
 CLAUDE.md
 AGENTS.md
 
 # Throwaway exploration, not part of the shipped src/ layout
 spike/
+
+# Claude Code local runtime state
+.claude/
 
 # .NET build output
 bin/

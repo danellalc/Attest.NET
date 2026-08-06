@@ -7,20 +7,22 @@ internal static class ProcessRunner
 {
     public static async Task<ProcessResult> RunAsync(
         string fileName,
-        string arguments,
+        IReadOnlyList<string> arguments,
         string workingDirectory,
         CancellationToken cancellationToken)
     {
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
-            Arguments = arguments,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var standardOutput = new StringBuilder();
@@ -41,8 +43,29 @@ internal static class ProcessRunner
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            KillIfRunning(process);
+            throw;
+        }
 
         return new ProcessResult(process.ExitCode, standardOutput.ToString(), standardError.ToString());
+    }
+
+    private static void KillIfRunning(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between the HasExited check and Kill; nothing left to do.
+        }
     }
 }

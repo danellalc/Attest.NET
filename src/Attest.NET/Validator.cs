@@ -25,7 +25,7 @@ public sealed class Validator : IValidator
         {
             var runResult = await ProcessRunner.RunAsync(
                 "dotnet",
-                $"test \"{test.ScratchProjectPath}\" --no-build -c Release --logger \"trx;LogFileName={trxFileName}\"",
+                ["test", test.ScratchProjectPath, "--no-build", "-c", "Release", "--logger", $"trx;LogFileName={trxFileName}"],
                 scratchDirectory,
                 cancellationToken).ConfigureAwait(false);
 
@@ -40,21 +40,30 @@ public sealed class Validator : IValidator
             directoryLock.Release();
         }
 
-        var firstPassed = results.TryGetValue(test.FirstSeedTestName, out var first) && first.Outcome == "Passed";
-        var secondPassed = results.TryGetValue(test.SecondSeedTestName, out var second) && second.Outcome == "Passed";
+        if (!results.TryGetValue(test.FirstSeedTestName, out var first))
+            throw new AttestValidationFailedException(
+                test.Candidate.Name,
+                $"No result found for '{test.FirstSeedTestName}' in the test run output.");
+
+        if (!results.TryGetValue(test.SecondSeedTestName, out var second))
+            throw new AttestValidationFailedException(
+                test.Candidate.Name,
+                $"No result found for '{test.SecondSeedTestName}' in the test run output.");
+
+        var firstPassed = first.Outcome == "Passed";
+        var secondPassed = second.Outcome == "Passed";
         var outcome = DetermineOutcome(firstPassed, secondPassed);
 
         return outcome switch
         {
             ValidationOutcome.Valid => new ValidationResult(test, outcome, Detail: null),
-            ValidationOutcome.FailsOnCurrentCode => new ValidationResult(
-                test,
-                outcome,
-                results.TryGetValue(test.FirstSeedTestName, out var failure) ? failure.Output : null),
+            ValidationOutcome.FailsOnCurrentCode => new ValidationResult(test, outcome, first.Output ?? second.Output),
             _ => new ValidationResult(
                 test,
                 outcome,
-                $"Passed under seed {ValidationSeeds.First} but not under {ValidationSeeds.Second}, or vice versa."),
+                firstPassed
+                    ? $"Passed under seed {ValidationSeeds.First} but failed under seed {ValidationSeeds.Second}: {second.Output}"
+                    : $"Passed under seed {ValidationSeeds.Second} but failed under seed {ValidationSeeds.First}: {first.Output}"),
         };
     }
 
@@ -74,14 +83,21 @@ public sealed class Validator : IValidator
     private static Dictionary<string, (string Outcome, string? Output)> ParseResults(string trxPath)
     {
         var document = XDocument.Load(trxPath);
+        var results = new Dictionary<string, (string Outcome, string? Output)>();
 
-        return document
-            .Descendants(TrxNamespace + "UnitTestResult")
-            .ToDictionary(
-                element => (string)element.Attribute("testName")!,
-                element => (
-                    Outcome: (string)element.Attribute("outcome")!,
-                    Output: element.Descendants(TrxNamespace + "Message").FirstOrDefault()?.Value
-                        ?? element.Descendants(TrxNamespace + "StdOut").FirstOrDefault()?.Value));
+        foreach (var element in document.Descendants(TrxNamespace + "UnitTestResult"))
+        {
+            var testName = element.Attribute("testName")?.Value;
+            var outcome = element.Attribute("outcome")?.Value;
+            if (testName is null || outcome is null)
+                continue;
+
+            var output = element.Descendants(TrxNamespace + "Message").FirstOrDefault()?.Value
+                ?? element.Descendants(TrxNamespace + "StdOut").FirstOrDefault()?.Value;
+
+            results[testName] = (outcome, output);
+        }
+
+        return results;
     }
 }
