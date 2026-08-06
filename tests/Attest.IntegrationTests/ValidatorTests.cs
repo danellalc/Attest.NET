@@ -3,6 +3,7 @@ using Attest.NET;
 
 namespace Attest.IntegrationTests;
 
+[Trait("Category", "Integration")]
 public class ValidatorTests
 {
     private static readonly string TargetProjectPath = Path.GetFullPath(

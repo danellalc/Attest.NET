@@ -3,6 +3,7 @@ using Attest.NET;
 
 namespace Attest.IntegrationTests;
 
+[Trait("Category", "Integration")]
 public class FalsifierTests
 {
     private static readonly string TargetProjectPath = Path.GetFullPath(
@@ -38,7 +39,7 @@ public class FalsifierTests
         var result = await falsifier.FalsifyAsync(synthesized, scope, CancellationToken.None);
 
         Assert.NotEmpty(result.KilledMutants);
-        Assert.All(result.KilledMutants, kill => Assert.Equal("PriceCalculator.cs", kill.FilePath));
+        Assert.All(result.KilledMutants, kill => Assert.Equal(TargetSourcePath, kill.FilePath));
     }
 
     [Fact]

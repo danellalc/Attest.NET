@@ -3,6 +3,7 @@ using Attest.NET;
 
 namespace Attest.IntegrationTests;
 
+[Trait("Category", "Integration")]
 public class EvidenceReporterTests
 {
     private static readonly string TargetProjectPath = Path.GetFullPath(
@@ -95,7 +96,7 @@ public class EvidenceReporterTests
         Assert.Equal(1, report.ProposedCount);
         var delivered = Assert.Single(report.Delivered);
         Assert.Equal(StrongCandidate, delivered.Candidate);
-        Assert.Equal("PriceCalculator.cs", delivered.Mutant.FilePath);
+        Assert.Equal(TargetSourcePath, delivered.Mutant.FilePath);
         Assert.Empty(report.Rejected);
         Assert.Empty(report.Quarantined);
     }
@@ -146,7 +147,7 @@ public class EvidenceReporterTests
         var validator = new Validator();
         var validation = await validator.ValidateAsync(synthesized, CancellationToken.None);
 
-        var fabricatedKill = new MutantKill("Fabricated mutation", "PriceCalculator.cs", 999, "not a real mutant");
+        var fabricatedKill = new MutantKill("Fabricated mutation", TargetSourcePath, 999, 1, "not a real mutant");
         var fabricatedFalsification = new FalsificationResult(synthesized, [fabricatedKill]);
 
         var reporter = new EvidenceReporter(new Falsifier());
