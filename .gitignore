@@ -3,6 +3,9 @@ PLANO.md
 CLAUDE.md
 AGENTS.md
 
+# Throwaway exploration, not part of the shipped src/ layout
+spike/
+
 # .NET build output
 bin/
 obj/

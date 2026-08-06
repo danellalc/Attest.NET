@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Attest.Core/Attest.Core.csproj" />
+    <Project Path="src/Attest.NET/Attest.NET.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Attest.IntegrationTests/Attest.IntegrationTests.csproj" />
+    <Project Path="tests/Attest.PropertyTests/Attest.PropertyTests.csproj" />
+    <Project Path="tests/Attest.UnitTests/Attest.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Fixtures/">
+    <Project Path="tests/Fixtures/PriceCalculatorFixture/PriceCalculatorFixture.csproj" />
+  </Folder>
+</Solution>
