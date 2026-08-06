@@ -53,7 +53,7 @@ public sealed class EvidenceReporter : IEvidenceReporter
                 continue;
             }
 
-            if (!falsificationByCandidate.TryGetValue(candidate, out var falsification) || falsification.KilledMutants.Count == 0)
+            if (!falsificationByCandidate.TryGetValue(candidate, out var falsification) || IsTrivial(falsification))
             {
                 rejected.Add(new RejectedCandidate(candidate, RejectionReason.Trivial, "Killed zero mutants."));
                 continue;
@@ -77,6 +77,12 @@ public sealed class EvidenceReporter : IEvidenceReporter
 
         return new FunnelReport(proposed.Count, delivered, rejected, quarantined);
     }
+
+    /// <summary>
+    /// Exposed so the Falsifier's own property test can assert, without running Stryker,
+    /// that this decision holds for every possible set of kills: zero kills is always trivial.
+    /// </summary>
+    internal static bool IsTrivial(FalsificationResult falsification) => falsification.KilledMutants.Count == 0;
 
     private static bool Matches(MutantKill original, MutantKill fresh) =>
         original.MutatorName == fresh.MutatorName

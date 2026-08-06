@@ -42,21 +42,34 @@ public sealed class Validator : IValidator
 
         var firstPassed = results.TryGetValue(test.FirstSeedTestName, out var first) && first.Outcome == "Passed";
         var secondPassed = results.TryGetValue(test.SecondSeedTestName, out var second) && second.Outcome == "Passed";
+        var outcome = DetermineOutcome(firstPassed, secondPassed);
 
-        if (firstPassed && secondPassed)
-            return new ValidationResult(test, ValidationOutcome.Valid, Detail: null);
-
-        if (!firstPassed && !secondPassed)
+        return outcome switch
         {
-            var detail = results.TryGetValue(test.FirstSeedTestName, out var failure) ? failure.Output : null;
-            return new ValidationResult(test, ValidationOutcome.FailsOnCurrentCode, detail);
-        }
-
-        return new ValidationResult(
-            test,
-            ValidationOutcome.Inconsistent,
-            $"Passed under seed {ValidationSeeds.First} but not under {ValidationSeeds.Second}, or vice versa.");
+            ValidationOutcome.Valid => new ValidationResult(test, outcome, Detail: null),
+            ValidationOutcome.FailsOnCurrentCode => new ValidationResult(
+                test,
+                outcome,
+                results.TryGetValue(test.FirstSeedTestName, out var failure) ? failure.Output : null),
+            _ => new ValidationResult(
+                test,
+                outcome,
+                $"Passed under seed {ValidationSeeds.First} but not under {ValidationSeeds.Second}, or vice versa."),
+        };
     }
+
+    /// <summary>
+    /// The pure decision the whole quarantine mechanism rests on. Exposed so it can be
+    /// tested exhaustively over all four outcomes without depending on FsCheck's genuinely
+    /// probabilistic behavior under two independent seeds.
+    /// </summary>
+    internal static ValidationOutcome DetermineOutcome(bool firstSeedPassed, bool secondSeedPassed) =>
+        (firstSeedPassed, secondSeedPassed) switch
+        {
+            (true, true) => ValidationOutcome.Valid,
+            (false, false) => ValidationOutcome.FailsOnCurrentCode,
+            _ => ValidationOutcome.Inconsistent,
+        };
 
     private static Dictionary<string, (string Outcome, string? Output)> ParseResults(string trxPath)
     {
