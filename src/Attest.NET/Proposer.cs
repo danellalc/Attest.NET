@@ -14,11 +14,16 @@ public sealed class Proposer : IProposer
 {
     private readonly ILlmProvider _provider;
 
+    /// <summary>
+    /// Creates the proposer over the given LLM backend.
+    /// </summary>
+    /// <param name="provider">The LLM backend to send prompts to.</param>
     public Proposer(ILlmProvider provider)
     {
         _provider = provider;
     }
 
+    /// <inheritdoc/>
     public async Task<ProposalResult> ProposeAsync(IReadOnlyList<ScopedSource> scopedMethods, CancellationToken cancellationToken)
     {
         if (scopedMethods.Count == 0)
@@ -85,14 +90,77 @@ public sealed class Proposer : IProposer
         return candidates;
     }
 
+    // A naive first-'['/last-']' scan breaks the moment stray brackets show up in prose around
+    // the array (an example like "int[]", or trailing text mentioning "T[]"), or inside a
+    // proposed property's own C# source code (array indexers, attribute lists). This instead
+    // tries every '[' in turn and, for each, tracks bracket depth while skipping over JSON
+    // string literals (respecting '\' escapes) to find where it balances. A balanced span with
+    // no object inside it (a bare "[]" from stray prose, not the real proposal) is kept only as
+    // a last-resort fallback, so a stray empty pair before the real array never wins over it.
     private static string ExtractJsonArray(string rawResponse)
     {
-        var start = rawResponse.IndexOf('[');
-        var end = rawResponse.LastIndexOf(']');
-        if (start < 0 || end < start)
-            throw new AttestProposalFailedException("no JSON array found in the response.", rawResponse);
+        string? fallback = null;
 
-        return rawResponse[start..(end + 1)];
+        var start = rawResponse.IndexOf('[');
+        while (start >= 0)
+        {
+            var match = TryMatchBalancedArray(rawResponse, start);
+            if (match is { ContainsObject: true } found)
+                return found.Text;
+
+            fallback ??= match?.Text;
+            start = rawResponse.IndexOf('[', start + 1);
+        }
+
+        return fallback ?? throw new AttestProposalFailedException("no balanced JSON array found in the response.", rawResponse);
+    }
+
+    private static (string Text, bool ContainsObject)? TryMatchBalancedArray(string rawResponse, int start)
+    {
+        var depth = 0;
+        var insideString = false;
+        var escapeNext = false;
+        var containsObject = false;
+
+        for (var i = start; i < rawResponse.Length; i++)
+        {
+            var current = rawResponse[i];
+
+            if (insideString)
+            {
+                if (escapeNext)
+                    escapeNext = false;
+                else if (current == '\\')
+                    escapeNext = true;
+                else if (current == '"')
+                    insideString = false;
+
+                continue;
+            }
+
+            switch (current)
+            {
+                case '"':
+                    insideString = true;
+                    break;
+                case '{':
+                    containsObject = true;
+                    depth++;
+                    break;
+                case '[':
+                    depth++;
+                    break;
+                case ']' or '}':
+                    depth--;
+                    if (depth == 0)
+                        return (rawResponse[start..(i + 1)], containsObject);
+                    if (depth < 0)
+                        return null;
+                    break;
+            }
+        }
+
+        return null;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };

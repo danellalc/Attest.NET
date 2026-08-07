@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Attest.Core;
 
@@ -21,6 +22,7 @@ public sealed class OllamaProvider : ILlmProvider
         _model = model;
     }
 
+    /// <inheritdoc/>
     public async Task<LlmResponse> CompleteAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken)
     {
         var request = new OllamaRequestDto(
@@ -34,13 +36,54 @@ public sealed class OllamaProvider : ILlmProvider
             // against qwen2.5-coder:7b.
             Options: new OllamaOptionsDto(Temperature: 0.2, RepeatPenalty: 1.3));
 
-        using var httpResponse = await _httpClient.PostAsJsonAsync("/api/chat", request, cancellationToken).ConfigureAwait(false);
-        httpResponse.EnsureSuccessStatusCode();
+        HttpResponseMessage httpResponse;
+        try
+        {
+            httpResponse = await _httpClient.PostAsJsonAsync("/api/chat", request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            throw new AttestProposalFailedException($"Could not reach Ollama: {ex.Message}", "");
+        }
 
-        var body = await httpResponse.Content.ReadFromJsonAsync<OllamaResponseDto>(cancellationToken).ConfigureAwait(false)
-            ?? throw new AttestProposalFailedException("Ollama response body was empty.", "");
+        using (httpResponse)
+        {
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                var errorBody = await ReadBodySafelyAsync(httpResponse, cancellationToken).ConfigureAwait(false);
+                throw new AttestProposalFailedException(
+                    $"Ollama returned {(int)httpResponse.StatusCode} {httpResponse.ReasonPhrase}.", errorBody);
+            }
 
-        return new LlmResponse(body.Message.Content, body.PromptEvalCount, body.EvalCount, EstimatedCostUsd: 0m);
+            OllamaResponseDto? body;
+            try
+            {
+                body = await httpResponse.Content.ReadFromJsonAsync<OllamaResponseDto>(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is JsonException or NotSupportedException)
+            {
+                throw new AttestProposalFailedException(
+                    $"Ollama response body was not valid JSON: {ex.Message}",
+                    await ReadBodySafelyAsync(httpResponse, cancellationToken).ConfigureAwait(false));
+            }
+
+            if (body is null)
+                throw new AttestProposalFailedException("Ollama response body was empty.", "");
+
+            return new LlmResponse(body.Message.Content, body.PromptEvalCount, body.EvalCount, EstimatedCostUsd: 0m);
+        }
+    }
+
+    private static async Task<string> ReadBodySafelyAsync(HttpResponseMessage httpResponse, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await httpResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            return "";
+        }
     }
 
     private sealed record OllamaRequestDto(

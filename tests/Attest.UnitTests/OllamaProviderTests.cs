@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Attest.Core;
 using Attest.NET;
 
 namespace Attest.UnitTests;
@@ -61,5 +62,47 @@ public class OllamaProviderTests
         var response = await provider.CompleteAsync("system", "user", CancellationToken.None);
 
         Assert.Equal(0m, response.EstimatedCostUsd);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_NonSuccessStatus_ThrowsNamedExceptionWithBody()
+    {
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("model not found", Encoding.UTF8, "text/plain"),
+        });
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:11434") };
+        var provider = new OllamaProvider(httpClient, "not-pulled-model");
+
+        var exception = await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
+
+        Assert.Contains("500", exception.Message);
+        Assert.Contains("model not found", exception.RawResponse);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_NonJsonBodyOn200_ThrowsNamedExceptionInsteadOfRaw()
+    {
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html>not ollama</html>", Encoding.UTF8, "text/html"),
+        });
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:11434") };
+        var provider = new OllamaProvider(httpClient, "llama3");
+
+        await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CompleteAsync_NetworkFailure_ThrowsNamedExceptionNotRaw()
+    {
+        var handler = new FakeHttpMessageHandler(_ => throw new HttpRequestException("connection refused"));
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:11434") };
+        var provider = new OllamaProvider(httpClient, "llama3");
+
+        await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
     }
 }

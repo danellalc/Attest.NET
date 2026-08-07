@@ -74,6 +74,39 @@ public class ProposerTests
         Assert.Throws<AttestProposalFailedException>(() => Proposer.ParseCandidates("I could not find a property to propose."));
     }
 
+    [Fact]
+    public void ParseCandidates_StrayBracketInTrailingProse_StillParses()
+    {
+        // A naive first-'['/last-']' scan takes whichever ']' comes last anywhere in the whole
+        // response; a stray one in unrelated trailing prose (here, "T[]") used to pull that
+        // prose into what was supposed to be pure JSON and break parsing entirely.
+        var response = """
+            [{"name": "Foo", "description": "d", "sourceCode": "[Property] public bool Foo() => true;"}]
+
+            Note: see the array type T[] for more info.
+            """;
+
+        var candidates = Proposer.ParseCandidates(response);
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal("Foo", candidate.Name);
+    }
+
+    [Fact]
+    public void ParseCandidates_StrayBracketInLeadingProse_StillParses()
+    {
+        var response = """
+            The signature takes an int[] parameter.
+
+            [{"name": "Foo", "description": "d", "sourceCode": "[Property] public bool Foo() => true;"}]
+            """;
+
+        var candidates = Proposer.ParseCandidates(response);
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal("Foo", candidate.Name);
+    }
+
     [Theory]
     [InlineData("""[{"description": "d", "sourceCode": "code"}]""")]
     [InlineData("""[{"name": "Foo", "description": "d"}]""")]

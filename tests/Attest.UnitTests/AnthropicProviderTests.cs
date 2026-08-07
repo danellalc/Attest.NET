@@ -74,4 +74,43 @@ public class AnthropicProviderTests
 
         Assert.Null(handler.LastRequest);
     }
+
+    [Fact]
+    public async Task CompleteAsync_NonSuccessStatus_ThrowsNamedExceptionWithBody()
+    {
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        {
+            Content = new StringContent("""{"error": {"message": "invalid x-api-key"}}""", Encoding.UTF8, "application/json"),
+        });
+        var provider = new AnthropicProvider(new HttpClient(handler), "sk-bad-key", "claude-sonnet-5");
+
+        var exception = await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
+
+        Assert.Contains("401", exception.Message);
+        Assert.Contains("invalid x-api-key", exception.RawResponse);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_MalformedJsonBody_ThrowsNamedException()
+    {
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("not json at all", Encoding.UTF8, "application/json"),
+        });
+        var provider = new AnthropicProvider(new HttpClient(handler), "sk-test-key", "claude-sonnet-5");
+
+        await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CompleteAsync_NetworkFailure_ThrowsNamedExceptionNotRaw()
+    {
+        var handler = new FakeHttpMessageHandler(_ => throw new HttpRequestException("connection refused"));
+        var provider = new AnthropicProvider(new HttpClient(handler), "sk-test-key", "claude-sonnet-5");
+
+        await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
+    }
 }
