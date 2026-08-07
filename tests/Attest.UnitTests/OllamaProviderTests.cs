@@ -105,4 +105,17 @@ public class OllamaProviderTests
         await Assert.ThrowsAsync<AttestProposalFailedException>(
             () => provider.CompleteAsync("system", "user", CancellationToken.None));
     }
+
+    [Fact]
+    public async Task CompleteAsync_CallerCancels_ThrowsOperationCanceledNotAttestProposalFailed()
+    {
+        var httpClient = new HttpClient(new BlockingHttpMessageHandler()) { BaseAddress = new Uri("http://localhost:11434") };
+        var provider = new OllamaProvider(httpClient, "llama3");
+        using var cts = new CancellationTokenSource();
+
+        var completeTask = provider.CompleteAsync("system", "user", cts.Token);
+        cts.Cancel();
+
+        await Assert.ThrowsAsync<TaskCanceledException>(() => completeTask);
+    }
 }

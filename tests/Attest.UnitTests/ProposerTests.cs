@@ -93,6 +93,28 @@ public class ProposerTests
     }
 
     [Fact]
+    public void ParseCandidates_MismatchedBracketTypeInSurroundingProse_StillParses()
+    {
+        // Depth-only balancing can be fooled when parentheses (never tracked) sit between two
+        // unrelated square brackets: "[0, 100)" (never closed, since ')' isn't tracked) plus a
+        // trailing "(0, 100]" nets to a validly-nested "[ [ {} ] ]" once the real array's own
+        // brackets are counted in between, so a naive scanner starting at the leading "[0, 100)"
+        // would swallow everything up to the trailing "]" as one "balanced" span.
+        var response = """
+            The discount percent is bounded to the interval [0, 100) roughly.
+
+            [{"name": "Foo", "description": "d", "sourceCode": "[Property] public bool Foo() => true;"}]
+
+            It stays within (0, 100] typically.
+            """;
+
+        var candidates = Proposer.ParseCandidates(response);
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal("Foo", candidate.Name);
+    }
+
+    [Fact]
     public void ParseCandidates_StrayBracketInLeadingProse_StillParses()
     {
         var response = """

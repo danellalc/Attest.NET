@@ -41,7 +41,7 @@ public sealed class OllamaProvider : ILlmProvider
         {
             httpResponse = await _httpClient.PostAsJsonAsync("/api/chat", request, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
         {
             throw new AttestProposalFailedException($"Could not reach Ollama: {ex.Message}", "");
         }

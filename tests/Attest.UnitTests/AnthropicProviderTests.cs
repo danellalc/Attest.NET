@@ -113,4 +113,22 @@ public class AnthropicProviderTests
         await Assert.ThrowsAsync<AttestProposalFailedException>(
             () => provider.CompleteAsync("system", "user", CancellationToken.None));
     }
+
+    [Fact]
+    public async Task CompleteAsync_CallerCancels_ThrowsOperationCanceledNotAttestProposalFailed()
+    {
+        // TaskCanceledException derives from OperationCanceledException, so a guard written as
+        // "catch HttpRequestException or TaskCanceledException" with no IsCancellationRequested
+        // check swallows a genuine Ctrl+C into AttestProposalFailedException. DiffCommand's own
+        // cancellation handler only catches OperationCanceledException, so that misclassification
+        // would report a wrong "could not reach Anthropic" message with exit code 1 instead of a
+        // clean cancellation with exit code 130.
+        var provider = new AnthropicProvider(new HttpClient(new BlockingHttpMessageHandler()), "sk-test-key", "claude-sonnet-5");
+        using var cts = new CancellationTokenSource();
+
+        var completeTask = provider.CompleteAsync("system", "user", cts.Token);
+        cts.Cancel();
+
+        await Assert.ThrowsAsync<TaskCanceledException>(() => completeTask);
+    }
 }

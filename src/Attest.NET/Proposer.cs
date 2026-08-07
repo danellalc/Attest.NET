@@ -104,15 +104,36 @@ public sealed class Proposer : IProposer
         var start = rawResponse.IndexOf('[');
         while (start >= 0)
         {
-            var match = TryMatchBalancedArray(rawResponse, start);
-            if (match is { ContainsObject: true } found)
-                return found.Text;
+            if (IsPlausibleArrayStart(rawResponse, start))
+            {
+                var match = TryMatchBalancedArray(rawResponse, start);
+                if (match is { ContainsObject: true } found)
+                    return found.Text;
 
-            fallback ??= match?.Text;
+                fallback ??= match?.Text;
+            }
+
             start = rawResponse.IndexOf('[', start + 1);
         }
 
         return fallback ?? throw new AttestProposalFailedException("no balanced JSON array found in the response.", rawResponse);
+    }
+
+    // Every real response is an array of objects (or, at worst, an empty array); prose that
+    // merely mentions a bracket ("int[]", or interval notation like "[0, 100)") never has an
+    // object, a nested array, or an immediate close right after it. Checking this BEFORE
+    // attempting to balance-scan matters beyond just skipping obviously-wrong starts: bracket
+    // depth alone cannot tell a stray '[' in leading prose from the real array's '[' when an
+    // unrelated ']' shows up later in trailing prose (e.g. "[0, 100) ... [{...}] ... (0, 100]"
+    // nets to a validly-nested "[ [ {} ] ]" once parentheses, which are not tracked at all, are
+    // ignored), so this prunes exactly the starting positions where that false balance can occur.
+    private static bool IsPlausibleArrayStart(string rawResponse, int bracketIndex)
+    {
+        var i = bracketIndex + 1;
+        while (i < rawResponse.Length && char.IsWhiteSpace(rawResponse[i]))
+            i++;
+
+        return i < rawResponse.Length && rawResponse[i] is '{' or '[' or ']';
     }
 
     private static (string Text, bool ContainsObject)? TryMatchBalancedArray(string rawResponse, int start)

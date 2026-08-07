@@ -60,7 +60,7 @@ public sealed class AnthropicProvider : ILlmProvider
         {
             httpResponse = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
         {
             throw new AttestProposalFailedException($"Could not reach Anthropic: {ex.Message}", "");
         }
