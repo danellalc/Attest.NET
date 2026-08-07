@@ -1,7 +1,12 @@
+using System.Text.Json;
+
 namespace Attest.Cli;
 
 internal static class InitCommand
 {
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+
     internal static int Run(string repositoryRoot, TextReader input, TextWriter output)
     {
         var path = Path.Combine(repositoryRoot, AttestConfig.FileName);
@@ -34,13 +39,8 @@ internal static class InitCommand
             ? parsed
             : AttestConfig.DefaultMaxMutants;
 
-        File.WriteAllText(path, $$"""
-            {
-              "provider": "{{provider}}",
-              "model": "{{model}}",
-              "maxMutants": {{maxMutants}}
-            }
-            """ + Environment.NewLine);
+        var dto = new AttestConfig.AttestConfigDto(provider, model, maxMutants);
+        File.WriteAllText(path, JsonSerializer.Serialize(dto, JsonOptions) + Environment.NewLine);
 
         output.WriteLine();
         output.WriteLine($"Wrote {path}.");

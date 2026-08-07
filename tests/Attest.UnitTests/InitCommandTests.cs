@@ -83,6 +83,20 @@ public class InitCommandTests
     }
 
     [Fact]
+    public void Run_ModelContainingQuoteAndBackslash_RoundTripsCorrectly()
+    {
+        // Raw string interpolation into the JSON template used to corrupt the file the moment
+        // a value contained a '"' or '\': proper JSON escaping must round-trip it instead.
+        const string model = "weird\"model\\name";
+
+        var exitCode = InitCommand.Run(_directory, new StringReader($"ollama\n{model}\n\n"), TextWriter.Null);
+
+        Assert.Equal(0, exitCode);
+        var config = AttestConfig.Load(_directory);
+        Assert.Equal(model, config.Model);
+    }
+
+    [Fact]
     public void Run_PromptsAreWrittenToOutput()
     {
         var output = new StringWriter();

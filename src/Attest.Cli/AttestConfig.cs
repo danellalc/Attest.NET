@@ -24,6 +24,10 @@ internal sealed record AttestConfig(string Provider, string Model, int MaxMutant
         {
             throw new AttestCliException($"'{path}' is not valid JSON: {ex.Message}");
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new AttestCliException($"Could not read '{path}': {ex.Message}");
+        }
 
         if (dto is null || string.IsNullOrWhiteSpace(dto.Provider) || string.IsNullOrWhiteSpace(dto.Model))
             throw new AttestCliException($"'{path}' must specify non-empty \"provider\" and \"model\" fields.");
@@ -33,7 +37,7 @@ internal sealed record AttestConfig(string Provider, string Model, int MaxMutant
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    private sealed record AttestConfigDto(
+    internal sealed record AttestConfigDto(
         [property: JsonPropertyName("provider")] string? Provider,
         [property: JsonPropertyName("model")] string? Model,
         [property: JsonPropertyName("maxMutants")] int? MaxMutants);

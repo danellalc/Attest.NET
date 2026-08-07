@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Attest.Cli;
@@ -108,7 +109,7 @@ internal static class DoctorCommand
 
             return ("ollama", false, $"Server reachable at {baseUrl}, but model '{model}' is not pulled. Run: ollama pull {model}");
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException)
         {
             return ("ollama", false, $"Could not reach Ollama at {baseUrl}: {ex.Message}");
         }

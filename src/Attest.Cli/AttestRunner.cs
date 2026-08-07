@@ -59,12 +59,14 @@ internal sealed class AttestRunner
             scope.ChangedMethods.Select(m => m.FilePath).Concat(scope.CallerMethods.Select(m => m.FilePath)).Distinct().ToList(),
             maxMutants);
 
-        // A candidate that fails to even compile never gets a SynthesizedTest, so it cannot
-        // flow through Validator/EvidenceReporter, which both require one. It is pulled out
-        // here and reported directly as Unsynthesizable, the reason Fase 0 already defined
-        // for exactly this case, rather than silently dropped from the funnel.
-        var synthesizable = new List<PropertyCandidate>();
-        var unsynthesizableRejections = new List<RejectedCandidate>();
+        // A candidate that never gets a SynthesizedTest (failed to compile) or never gets a
+        // ValidationResult (the test run itself crashed) cannot flow through EvidenceReporter,
+        // which requires both for every candidate it is given. Both are pulled out here and
+        // folded back into the report by name, using the reasons Attest.Core already defines
+        // for exactly these two cases, rather than either aborting the whole run or silently
+        // dropping the candidate from the funnel.
+        var deliverableCandidates = new List<PropertyCandidate>();
+        var preFilteredRejections = new List<RejectedCandidate>();
         var validations = new List<ValidationResult>();
         var falsifications = new List<FalsificationResult>();
 
@@ -77,13 +79,27 @@ internal sealed class AttestRunner
             }
             catch (AttestSynthesisFailedException ex)
             {
-                unsynthesizableRejections.Add(new RejectedCandidate(candidate, RejectionReason.Unsynthesizable, ex.BuildOutput));
+                preFilteredRejections.Add(new RejectedCandidate(candidate, RejectionReason.Unsynthesizable, ex.BuildOutput));
+                continue;
+            }
+            catch (AttestUnsynthesizableTypeException ex)
+            {
+                preFilteredRejections.Add(new RejectedCandidate(candidate, RejectionReason.Unsynthesizable, ex.Message));
                 continue;
             }
 
-            synthesizable.Add(candidate);
+            ValidationResult validation;
+            try
+            {
+                validation = await _validator.ValidateAsync(synthesized, cancellationToken).ConfigureAwait(false);
+            }
+            catch (AttestValidationFailedException ex)
+            {
+                preFilteredRejections.Add(new RejectedCandidate(candidate, RejectionReason.ValidationFailed, ex.RunOutput));
+                continue;
+            }
 
-            var validation = await _validator.ValidateAsync(synthesized, cancellationToken).ConfigureAwait(false);
+            deliverableCandidates.Add(candidate);
             validations.Add(validation);
 
             if (validation.Outcome != ValidationOutcome.Valid)
@@ -102,13 +118,13 @@ internal sealed class AttestRunner
         }
 
         var coreReport = await _evidenceReporter
-            .BuildReportAsync(synthesizable, validations, falsifications, mutationScope, cancellationToken)
+            .BuildReportAsync(deliverableCandidates, validations, falsifications, mutationScope, cancellationToken)
             .ConfigureAwait(false);
 
         var report = new FunnelReport(
             proposal.Candidates.Count,
             coreReport.Delivered,
-            [.. coreReport.Rejected, .. unsynthesizableRejections],
+            [.. coreReport.Rejected, .. preFilteredRejections],
             coreReport.Quarantined);
 
         return new AttestRunResult(report, proposal.Usage, proposal.FromCache);

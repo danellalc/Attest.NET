@@ -5,7 +5,12 @@ namespace Attest.Cli;
 
 internal static class DiffCommand
 {
-    internal static async Task<int> RunAsync(string[] args, TextWriter output, TextWriter error, bool useColor = false)
+    internal static async Task<int> RunAsync(
+        string[] args,
+        TextWriter output,
+        TextWriter error,
+        bool useColor = false,
+        CancellationToken cancellationToken = default)
     {
         var diffIndex = Array.IndexOf(args, "--diff");
         var projectIndex = Array.IndexOf(args, "--project");
@@ -37,7 +42,7 @@ internal static class DiffCommand
                 new Falsifier(),
                 new EvidenceReporter(new Falsifier()));
 
-            var result = await runner.RunAsync(repositoryRoot, targetProjectPath, baseRef, config.MaxMutants, CancellationToken.None);
+            var result = await runner.RunAsync(repositoryRoot, targetProjectPath, baseRef, config.MaxMutants, cancellationToken);
 
             var rendered = ReportRenderer.Render(result, useColor);
 
@@ -53,15 +58,37 @@ internal static class DiffCommand
         {
             error.WriteLine($"attest: {ex.Message}");
 
-            if (ex is AttestProposalFailedException proposalFailure && proposalFailure.RawResponse.Length > 0)
+            if (ExtractDiagnosticOutput(ex) is { } diagnostic)
             {
-                var safeRawResponse = new Sanitizer().Sanitize(proposalFailure.RawResponse).RedactedContent;
+                var safeOutput = new Sanitizer().Sanitize(diagnostic.Output).RedactedContent;
                 error.WriteLine();
-                error.WriteLine("Model's raw response, for diagnosis:");
-                error.WriteLine(safeRawResponse);
+                error.WriteLine(diagnostic.Label);
+                error.WriteLine(safeOutput);
             }
 
             return 1;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            error.WriteLine();
+            error.WriteLine("attest: cancelled.");
+            return 130;
+        }
     }
+
+    // Every stage that runs an external process (compiler, test runner, mutation runner) or
+    // calls an LLM keeps that process's own output on its exception, for exactly this: a
+    // pipeline failure the user can actually diagnose instead of just a one-line message.
+    internal static (string Label, string Output)? ExtractDiagnosticOutput(AttestException ex) => ex switch
+    {
+        AttestProposalFailedException proposalFailure when proposalFailure.RawResponse.Length > 0 =>
+            ("Model's raw response, for diagnosis:", proposalFailure.RawResponse),
+        AttestSynthesisFailedException synthesisFailure when synthesisFailure.BuildOutput.Length > 0 =>
+            ("Compiler output, for diagnosis:", synthesisFailure.BuildOutput),
+        AttestValidationFailedException validationFailure when validationFailure.RunOutput.Length > 0 =>
+            ("Test run output, for diagnosis:", validationFailure.RunOutput),
+        AttestFalsificationFailedException falsificationFailure when falsificationFailure.RunOutput.Length > 0 =>
+            ("Mutation run output, for diagnosis:", falsificationFailure.RunOutput),
+        _ => null,
+    };
 }
