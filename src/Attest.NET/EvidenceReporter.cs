@@ -12,11 +12,17 @@ public sealed class EvidenceReporter : IEvidenceReporter
 {
     private readonly IFalsifier _falsifier;
 
+    /// <summary>
+    /// Creates the reporter over the given falsifier, used to re-verify every kill live before
+    /// a candidate reaches <see cref="FunnelReport.Delivered"/>.
+    /// </summary>
+    /// <param name="falsifier">The falsifier to re-run against each surviving candidate.</param>
     public EvidenceReporter(IFalsifier falsifier)
     {
         _falsifier = falsifier;
     }
 
+    /// <inheritdoc/>
     public async Task<FunnelReport> BuildReportAsync(
         IReadOnlyList<PropertyCandidate> proposed,
         IReadOnlyList<ValidationResult> validations,
@@ -66,7 +72,23 @@ public sealed class EvidenceReporter : IEvidenceReporter
                 continue;
             }
 
-            var reverified = await _falsifier.FalsifyAsync(falsification.Test, scope, cancellationToken).ConfigureAwait(false);
+            FalsificationResult reverified;
+            try
+            {
+                reverified = await _falsifier.FalsifyAsync(falsification.Test, scope, cancellationToken).ConfigureAwait(false);
+            }
+            catch (AttestFalsificationFailedException)
+            {
+                // A transient failure on the re-verification run itself (not a real "the kill
+                // didn't reproduce" result) still must not deliver on stale evidence, and must
+                // not abort every other candidate's report either.
+                rejected.Add(new RejectedCandidate(
+                    candidate,
+                    RejectionReason.Trivial,
+                    "Re-verification run failed; stale proof dropped rather than delivered unverified."));
+                continue;
+            }
+
             var stillKilled = falsification.KilledMutants.FirstOrDefault(reverified.KilledMutants.Contains);
 
             if (stillKilled is null)
