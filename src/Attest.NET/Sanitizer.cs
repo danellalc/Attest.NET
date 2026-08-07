@@ -12,10 +12,31 @@ public sealed partial class Sanitizer : ISanitizer
 {
     private const int MinTokenLength = 20;
 
-    // Hex digests (git SHAs, MD5/SHA hashes) top out at exactly 4.0 bits/char (log2(16)),
-    // real base64 secrets comfortably clear it (up to log2(64) = 6.0); this sits between the
-    // two so hashes routinely shown in diffs and logs don't get flagged as secrets.
+    // Hex digests (git SHAs, MD5/SHA hashes) top out at exactly 4.0 bits/char (log2(16)); this
+    // sits above that so hashes routinely shown in diffs and logs don't get flagged. Applies
+    // only when nothing nearby suggests the value is actually meant to be secret; see
+    // EntropyThresholdWithContext for when it does.
     private const double EntropyThreshold = 4.5;
+
+    // A high-entropy token sitting right after a name like "secret" or "apiKey" is far more
+    // likely to be a real credential than the same entropy value with no such context, so the
+    // bar drops here. Calibrated empirically: realistic 20-30 character secrets (Stripe-,
+    // GitHub-, and Slack-shaped keys) measure 4.3-4.5 bits/char, comfortably above this: the
+    // higher unconditional threshold above was missing that whole class of secret at plausible
+    // lengths, since the true entropy ceiling for a string that short rarely reaches 4.5 even
+    // when genuinely random.
+    private const double EntropyThresholdWithContext = 3.5;
+
+    // Deliberately more specific than bare "key" or "token": both are extremely common in
+    // ordinary code (dictionary keys, CancellationToken, SyntaxToken) and would turn the
+    // lowered threshold above into a much bigger false-positive source than it is trying to
+    // fix.
+    private static readonly string[] SecretContextKeywords =
+    [
+        "secret", "password", "pwd", "apikey", "api_key", "api-key",
+        "accesstoken", "access_token", "access-token", "authtoken", "auth_token",
+        "credential", "privatekey", "private_key", "clientsecret", "client_secret", "bearer",
+    ];
 
     private static readonly (string Category, Func<Regex> Pattern)[] PatternDetectors =
     [
@@ -27,6 +48,7 @@ public sealed partial class Sanitizer : ISanitizer
         ("ConnectionStringPassword", ConnectionStringPasswordPattern),
     ];
 
+    /// <inheritdoc/>
     public SanitizationResult Sanitize(string content)
     {
         var matches = new List<(int Start, int Length, string Category)>();
@@ -53,15 +75,29 @@ public sealed partial class Sanitizer : ISanitizer
     {
         var sorted = matches.OrderBy(m => m.Start).ThenByDescending(m => m.Length).ToList();
         var resolved = new List<(int Start, int Length, string Category)>();
-        var lastEnd = -1;
 
         foreach (var match in sorted)
         {
-            if (match.Start < lastEnd)
-                continue;
+            var matchEnd = match.Start + match.Length;
+
+            if (resolved.Count > 0)
+            {
+                var last = resolved[^1];
+                var lastEnd = last.Start + last.Length;
+
+                if (match.Start < lastEnd)
+                {
+                    // Overlaps the previous match: redact the union, not just whichever span
+                    // was kept. A pattern with a fixed-length quantifier can match only part
+                    // of a longer real secret; dropping the rest here would leave it sitting
+                    // in plain text right next to a tag that looks like it was handled.
+                    if (matchEnd > lastEnd)
+                        resolved[^1] = (last.Start, matchEnd - last.Start, last.Category);
+                    continue;
+                }
+            }
 
             resolved.Add(match);
-            lastEnd = match.Start + match.Length;
         }
 
         return resolved;
@@ -92,12 +128,39 @@ public sealed partial class Sanitizer : ISanitizer
             if (candidate.Length < MinTokenLength)
                 continue;
 
-            if (alreadyMatched.Any(m => Overlaps(candidate.Index, candidate.Length, m.Start, m.Length)))
+            var candidateEnd = candidate.Index + candidate.Length;
+
+            // Skip only when an existing match already covers this candidate completely; a
+            // candidate that merely overlaps (extends past a shorter pattern match) still
+            // needs to be considered, or a real secret's tail never gets flagged at all. See
+            // ResolveOverlaps for how a partial overlap becomes one redaction covering both.
+            if (alreadyMatched.Any(m => candidate.Index >= m.Start && candidateEnd <= m.Start + m.Length))
                 continue;
 
-            if (ComputeShannonEntropy(candidate.Value) >= EntropyThreshold)
+            var threshold = HasSecretContext(content, candidate.Index) ? EntropyThresholdWithContext : EntropyThreshold;
+            if (ComputeShannonEntropy(candidate.Value) >= threshold)
                 yield return (candidate.Index, candidate.Length);
         }
+    }
+
+    /// <summary>
+    /// True when a name like "secret" or "apiKey" appears on the same line, before the
+    /// candidate token. Deliberately line-scoped rather than a fixed character window: a
+    /// secret-looking value on an unrelated line should not inherit context from a "password"
+    /// mentioned somewhere far above it.
+    /// </summary>
+    private static bool HasSecretContext(string content, int candidateStart)
+    {
+        var lineStart = content.LastIndexOf('\n', Math.Max(0, candidateStart - 1)) + 1;
+        var prefix = content[lineStart..candidateStart];
+
+        foreach (var keyword in SecretContextKeywords)
+        {
+            if (prefix.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private static bool Overlaps(int start1, int length1, int start2, int length2) =>
@@ -144,7 +207,7 @@ public sealed partial class Sanitizer : ISanitizer
     [GeneratedRegex(@"\bAKIA[0-9A-Z]{16}\b")]
     private static partial Regex AwsAccessKeyIdPattern();
 
-    [GeneratedRegex(@"\b(?:aws_secret_access_key|aws_secret_key)\s*[=:]\s*['""]?[A-Za-z0-9/+=]{40}['""]?", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?:aws_secret_access_key|aws_secret_key)\s*[=:]\s*['""]?[A-Za-z0-9/+=]{40,}['""]?", RegexOptions.IgnoreCase)]
     private static partial Regex AwsSecretAccessKeyPattern();
 
     [GeneratedRegex(@"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\b")]
@@ -156,7 +219,7 @@ public sealed partial class Sanitizer : ISanitizer
     [GeneratedRegex(@"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]+:[^\s/@]+@")]
     private static partial Regex PasswordInUrlPattern();
 
-    [GeneratedRegex(@"\b(?:password|pwd)\s*=\s*[^;'""\s]+", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?:password|pwd)\s*=\s*(?:'[^']*'|""[^""]*""|[^;'""\s]+)", RegexOptions.IgnoreCase)]
     private static partial Regex ConnectionStringPasswordPattern();
 
     [GeneratedRegex(@"[A-Za-z0-9+/_=-]{20,}")]

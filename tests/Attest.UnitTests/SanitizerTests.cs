@@ -169,4 +169,91 @@ public class SanitizerTests
 
         Assert.Equal(expectedAboveThreshold, entropy >= 4.5);
     }
+
+    [Fact]
+    public void Sanitize_ModerateEntropyToken_FlaggedWhenNearSecretKeyword()
+    {
+        // 4.075 bits/char: above the context-gated threshold (3.5) but below the unconditional
+        // one (4.5), the exact gap that made realistic 20-30 character secrets uncatchable
+        // before this token was line-scoped to a nearby "password"/"secret"/etc keyword.
+        // Uses "clientSecret" rather than "password" so this exercises the entropy path
+        // specifically, not ConnectionStringPasswordPattern's own "password"/"pwd" match.
+        var content = "var clientSecret = \"correcthorsebatterystaple12345678\";";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.DoesNotContain("correcthorsebatterystaple12345678", result.RedactedContent);
+        Assert.Contains(result.Findings, f => f.Category == "HighEntropyToken");
+    }
+
+    [Fact]
+    public void Sanitize_ModerateEntropyToken_NotFlaggedWithoutSecretContext()
+    {
+        var content = "var identifier = \"correcthorsebatterystaple12345678\";";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.Equal(content, result.RedactedContent);
+        Assert.Empty(result.Findings);
+    }
+
+    [Fact]
+    public void Sanitize_BareKeyOrTokenKeyword_DoesNotLowerTheThreshold()
+    {
+        // "key" and "token" are deliberately excluded from the context keyword list: both are
+        // everyday C# vocabulary (dictionary keys, CancellationToken), and lowering the bar
+        // next to them would turn ordinary identifiers into false positives.
+        var content = "var token = \"correcthorsebatterystaple12345678\";";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.Equal(content, result.RedactedContent);
+        Assert.Empty(result.Findings);
+    }
+
+    [Fact]
+    public void Sanitize_AwsSecretAccessKeyLongerThan40Chars_EntireValueRedacted()
+    {
+        // The AWS pattern used to cap its match at exactly 40 characters; a real secret longer
+        // than that left its tail sitting in plain text right next to a tag that looked like
+        // the whole value had already been handled.
+        const string value = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEYEXTRAEXTRAEXTRA";
+        var content = $"aws_secret_access_key = \"{value}\"";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.DoesNotContain(value, result.RedactedContent);
+        Assert.DoesNotContain("EXTRAEXTRAEXTRA", result.RedactedContent);
+    }
+
+    [Fact]
+    public void Sanitize_SecretValueExtendingPastAPatternMatch_RedactsTheWholeUnion()
+    {
+        // The AWS-pattern value charset stops at the '-'; the broader entropy-candidate charset
+        // does not, so the entropy candidate starts inside the AWS match but ends past it. This
+        // is the general case findings #13 covers: overlap resolution must extend the redacted
+        // span to the union instead of dropping whichever match came second.
+        const string tailAfterPatternStops = "-GhIjKlMnOp";
+        var content = $"aws_secret_access_key = \"AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEf{tailAfterPatternStops}\"";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.DoesNotContain(tailAfterPatternStops, result.RedactedContent);
+        Assert.DoesNotContain("AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEf", result.RedactedContent);
+    }
+
+    [Theory]
+    [InlineData("Password='Sup3r;Secret!';")]
+    [InlineData("Password=\"Sup3r;Secret!\";")]
+    public void Sanitize_QuotedConnectionStringPasswordContainingSemicolon_FullyRedacted(string passwordAssignment)
+    {
+        // Unquoted, the pattern stops at the first ';'; a quoted password can legitimately
+        // contain one, and the old pattern leaked everything after it.
+        var content = $"Server=tcp:my.server.com;Database=prod;User Id=admin;{passwordAssignment}";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.DoesNotContain("Sup3r;Secret!", result.RedactedContent);
+        Assert.Contains(result.Findings, f => f.Category == "ConnectionStringPassword");
+    }
 }
