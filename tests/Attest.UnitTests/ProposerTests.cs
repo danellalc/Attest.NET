@@ -1,0 +1,155 @@
+using Attest.Core;
+using Attest.NET;
+
+namespace Attest.UnitTests;
+
+public class ProposerTests
+{
+    [Fact]
+    public void ParseCandidates_ValidJsonArray_ReturnsCandidates()
+    {
+        var response = """
+            [{"name": "Foo", "description": "d", "sourceCode": "[Property] public bool Foo() => true;"}]
+            """;
+
+        var candidates = Proposer.ParseCandidates(response);
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal("Foo", candidate.Name);
+        Assert.Equal("d", candidate.Description);
+    }
+
+    [Fact]
+    public void ParseCandidates_JsonWrappedInMarkdownFence_StillParses()
+    {
+        var response = """
+            Here are the properties I propose:
+
+            ```json
+            [{"name": "Foo", "description": "d", "sourceCode": "[Property] public bool Foo() => true;"}]
+            ```
+            """;
+
+        var candidates = Proposer.ParseCandidates(response);
+
+        Assert.Single(candidates);
+    }
+
+    [Fact]
+    public void ParseCandidates_MultipleCandidates_ReturnsAllInOrder()
+    {
+        var response = """
+            [
+              {"name": "Foo", "description": "d1", "sourceCode": "[Property] public bool Foo() => true;"},
+              {"name": "Bar", "description": "d2", "sourceCode": "[Property] public bool Bar() => true;"}
+            ]
+            """;
+
+        var candidates = Proposer.ParseCandidates(response);
+
+        Assert.Equal(2, candidates.Count);
+        Assert.Equal("Foo", candidates[0].Name);
+        Assert.Equal("Bar", candidates[1].Name);
+    }
+
+    [Fact]
+    public void ParseCandidates_EmptyArray_ReturnsEmptyList()
+    {
+        var candidates = Proposer.ParseCandidates("[]");
+
+        Assert.Empty(candidates);
+    }
+
+    [Fact]
+    public void ParseCandidates_MalformedJson_ThrowsNamedException()
+    {
+        var exception = Assert.Throws<AttestProposalFailedException>(() => Proposer.ParseCandidates("[{\"name\": }]"));
+
+        Assert.Contains("[{\"name\": }]", exception.RawResponse);
+    }
+
+    [Fact]
+    public void ParseCandidates_NoJsonArrayInResponse_ThrowsNamedException()
+    {
+        Assert.Throws<AttestProposalFailedException>(() => Proposer.ParseCandidates("I could not find a property to propose."));
+    }
+
+    [Theory]
+    [InlineData("""[{"description": "d", "sourceCode": "code"}]""")]
+    [InlineData("""[{"name": "Foo", "description": "d"}]""")]
+    [InlineData("""[{"name": "", "description": "d", "sourceCode": "code"}]""")]
+    public void ParseCandidates_MissingRequiredField_ThrowsNamedException(string response)
+    {
+        Assert.Throws<AttestProposalFailedException>(() => Proposer.ParseCandidates(response));
+    }
+
+    [Fact]
+    public void BuildUserPrompt_IncludesQualifiedNameAndSource()
+    {
+        var scoped = new[] { new ScopedSource("My.Namespace.Calculator", "Add", "public int Add(int a, int b) => a + b;") };
+
+        var prompt = Proposer.BuildUserPrompt(scoped);
+
+        Assert.Contains("My.Namespace.Calculator.Add", prompt);
+        Assert.Contains("public int Add(int a, int b) => a + b;", prompt);
+    }
+
+    [Fact]
+    public async Task ProposeAsync_EmptyScopedMethods_ReturnsEmptyWithoutCallingProvider()
+    {
+        var provider = new FakeLlmProvider(new LlmResponse("[]", 0, 0, 0m));
+        var proposer = new Proposer(provider);
+
+        var result = await proposer.ProposeAsync([], CancellationToken.None);
+
+        Assert.Empty(result.Candidates);
+        Assert.Equal(0, provider.CallCount);
+        Assert.False(result.FromCache);
+    }
+
+    [Fact]
+    public async Task ProposeAsync_FirstCall_InvokesProviderAndReturnsUsage()
+    {
+        var marker = Guid.NewGuid().ToString("N");
+        var scoped = new[] { new ScopedSource("Fixture.Type", $"Method_{marker}", $"public bool Method_{marker}() => true;") };
+        var response = new LlmResponse(
+            $$"""[{"name": "Prop_{{marker}}", "description": "d", "sourceCode": "[Property] public bool Prop_{{marker}}() => true;"}]""",
+            InputTokens: 100,
+            OutputTokens: 50,
+            EstimatedCostUsd: 0.01m);
+        var provider = new FakeLlmProvider(response);
+        var proposer = new Proposer(provider);
+
+        var result = await proposer.ProposeAsync(scoped, CancellationToken.None);
+
+        Assert.Equal(1, provider.CallCount);
+        Assert.False(result.FromCache);
+        Assert.Equal(100, result.Usage.InputTokens);
+        Assert.Equal(0.01m, result.Usage.EstimatedCostUsd);
+        Assert.Single(result.Candidates);
+        Assert.Contains(marker, provider.LastUserPrompt);
+    }
+
+    [Fact]
+    public async Task ProposeAsync_SecondCallWithIdenticalInput_ReadsFromCacheWithoutCallingProvider()
+    {
+        var marker = Guid.NewGuid().ToString("N");
+        var scoped = new[] { new ScopedSource("Fixture.Type", $"Method_{marker}", $"public bool Method_{marker}() => true;") };
+        var response = new LlmResponse(
+            $$"""[{"name": "Prop_{{marker}}", "description": "d", "sourceCode": "[Property] public bool Prop_{{marker}}() => true;"}]""",
+            InputTokens: 100,
+            OutputTokens: 50,
+            EstimatedCostUsd: 0.01m);
+        var provider = new FakeLlmProvider(response);
+        var proposer = new Proposer(provider);
+
+        var first = await proposer.ProposeAsync(scoped, CancellationToken.None);
+        var second = await proposer.ProposeAsync(scoped, CancellationToken.None);
+
+        Assert.Equal(1, provider.CallCount);
+        Assert.False(first.FromCache);
+        Assert.True(second.FromCache);
+        Assert.Equal(0m, second.Usage.EstimatedCostUsd);
+        Assert.Equal(first.Candidates.Single().Name, second.Candidates.Single().Name);
+    }
+}
