@@ -46,6 +46,15 @@ try
 catch (AttestException ex)
 {
     Console.Error.WriteLine($"attest: {ex.Message}");
+
+    if (ex is AttestProposalFailedException proposalFailure && proposalFailure.RawResponse.Length > 0)
+    {
+        var safeRawResponse = new Sanitizer().Sanitize(proposalFailure.RawResponse).RedactedContent;
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("Model's raw response, for diagnosis:");
+        Console.Error.WriteLine(safeRawResponse);
+    }
+
     return 1;
 }
 
@@ -62,11 +71,17 @@ static AnthropicProvider CreateAnthropicProvider(string model)
     if (string.IsNullOrWhiteSpace(apiKey))
         throw new AttestCliException("ANTHROPIC_API_KEY is not set.");
 
-    return new AnthropicProvider(new HttpClient(), apiKey, model);
+    return new AnthropicProvider(new HttpClient { Timeout = TimeSpan.FromMinutes(5) }, apiKey, model);
 }
 
 static OllamaProvider CreateOllamaProvider(string model)
 {
     var baseUrl = Environment.GetEnvironmentVariable("OLLAMA_HOST") ?? "http://localhost:11434";
-    return new OllamaProvider(new HttpClient { BaseAddress = new Uri(baseUrl) }, model);
+
+    // HttpClient's own 100-second default is shorter than a single cold-loaded CPU-only
+    // inference pass on a local model can take (observed directly: ~50s just to load a 7B
+    // model before generation starts). One deliberate call with no retry loop is the point,
+    // so let it take as long as local hardware needs instead of timing out mid-generation.
+    var httpClient = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromMinutes(15) };
+    return new OllamaProvider(httpClient, model);
 }

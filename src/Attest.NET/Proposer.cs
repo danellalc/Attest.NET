@@ -107,6 +107,9 @@ public sealed class Proposer : IProposer
         ordering (the operation preserves or reverses a known order), metamorphic relation
         (a specific change to the input produces a predictable change to the output).
 
+        Propose at most 2 properties per method. One excellent property beats several mediocre
+        ones, and every extra property is another chance to make a mistake in the JSON below.
+
         Rules for every proposed property:
         - The method signature is `[Property] public bool Name(<FsCheck-generatable parameters>)`.
         - The method name matches the JSON "name" field exactly; it becomes a class member name.

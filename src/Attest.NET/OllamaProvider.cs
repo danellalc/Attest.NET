@@ -26,7 +26,13 @@ public sealed class OllamaProvider : ILlmProvider
         var request = new OllamaRequestDto(
             _model,
             [new OllamaMessageDto("system", systemPrompt), new OllamaMessageDto("user", userPrompt)],
-            Stream: false);
+            Stream: false,
+            // Structured JSON output needs the model to stop rambling, not explore: low
+            // temperature, and a repeat penalty high enough to stop the word-stuttering
+            // ("never returns returns") that a default-sampled small local model produces
+            // often enough to break its own string escaping, observed directly running this
+            // against qwen2.5-coder:7b.
+            Options: new OllamaOptionsDto(Temperature: 0.2, RepeatPenalty: 1.3));
 
         using var httpResponse = await _httpClient.PostAsJsonAsync("/api/chat", request, cancellationToken).ConfigureAwait(false);
         httpResponse.EnsureSuccessStatusCode();
@@ -40,7 +46,12 @@ public sealed class OllamaProvider : ILlmProvider
     private sealed record OllamaRequestDto(
         [property: JsonPropertyName("model")] string Model,
         [property: JsonPropertyName("messages")] List<OllamaMessageDto> Messages,
-        [property: JsonPropertyName("stream")] bool Stream);
+        [property: JsonPropertyName("stream")] bool Stream,
+        [property: JsonPropertyName("options")] OllamaOptionsDto Options);
+
+    private sealed record OllamaOptionsDto(
+        [property: JsonPropertyName("temperature")] double Temperature,
+        [property: JsonPropertyName("repeat_penalty")] double RepeatPenalty);
 
     private sealed record OllamaMessageDto(
         [property: JsonPropertyName("role")] string Role,
