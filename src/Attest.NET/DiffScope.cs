@@ -53,14 +53,14 @@ public sealed class DiffScope : IDiffScope
             }
             catch (Exception ex) when (ex is InvalidOperationException or IOException)
             {
-                throw new AttestDiffScopeFailedException(repositoryRoot, $"Could not load project '{projectPath}': {ex.Message}");
+                throw new AttestDiffScopeFailedException(realRoot, $"Could not load project '{projectPath}': {ex.Message}");
             }
         }
 
         var failures = workspace.Diagnostics.Where(d => d.Kind == WorkspaceDiagnosticKind.Failure).ToList();
         if (failures.Count > 0)
             throw new AttestDiffScopeFailedException(
-                repositoryRoot,
+                realRoot,
                 $"{failures.Count} project(s) failed to load: {string.Join("; ", failures.Select(f => f.Message))}");
 
         var solution = workspace.CurrentSolution;

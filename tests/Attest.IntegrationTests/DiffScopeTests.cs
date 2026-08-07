@@ -126,6 +126,42 @@ public class DiffScopeTests
     }
 
     [Fact]
+    public async Task ComputeScopeAsync_RepositoryRootIsASubdirectory_ProjectLoadFailureReportsTheRealRootNotTheSubdirectory()
+    {
+        // The fix for the subdirectory case above resolves realRoot once and uses it for the
+        // diff and for project discovery, but the two exception sites for a project that fails
+        // to load still passed the raw, possibly-subdirectory repositoryRoot parameter through
+        // to AttestDiffScopeFailedException. Its own doc calls RepositoryRoot "Root of the
+        // repository the DiffScope was asked to scope", so it must reflect the actual resolved
+        // root, not whichever subdirectory this particular call happened to be scoped from.
+        WriteFixture();
+        await RunGitAsync("init", "-b", "main");
+        await RunGitAsync("add", ".");
+        var baseCommit = await CommitAsync("initial");
+
+        var calculatorPath = Path.Combine(_repositoryRoot, "Lib", "Calculator.cs");
+        await File.WriteAllTextAsync(calculatorPath, """
+            namespace Lib;
+
+            public class Calculator
+            {
+                public int Add(int a, int b) => a + b + 0;
+            }
+            """);
+
+        // A project OUTSIDE the "Lib" subdirectory, found only because project discovery walks
+        // from the resolved real root, made malformed on purpose so it fails to load.
+        await File.WriteAllTextAsync(Path.Combine(_repositoryRoot, "Consumer", "Consumer.csproj"), "not valid project xml <<<");
+
+        var libSubdirectory = Path.Combine(_repositoryRoot, "Lib");
+
+        var exception = await Assert.ThrowsAsync<AttestDiffScopeFailedException>(
+            () => new DiffScope().ComputeScopeAsync(libSubdirectory, baseCommit, CancellationToken.None));
+
+        Assert.NotEqual(libSubdirectory, exception.RepositoryRoot);
+    }
+
+    [Fact]
     public async Task ComputeScopeAsync_BadBaseRef_ThrowsNamedException()
     {
         WriteFixture();
