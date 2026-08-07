@@ -7,6 +7,9 @@ public static class PriceCalculator
         if (discountPercent < 0 || discountPercent > 100)
             throw new ArgumentOutOfRangeException(nameof(discountPercent));
 
+        if (originalPrice < 0)
+            throw new ArgumentOutOfRangeException(nameof(originalPrice));
+
         var discount = originalPrice * discountPercent / 100;
         return originalPrice - discount;
     }
