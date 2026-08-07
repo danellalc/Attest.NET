@@ -22,4 +22,12 @@ public enum RejectionReason
     /// crash, missing tool, unreadable TRX), as opposed to the property failing normally.
     /// </summary>
     ValidationFailed,
+
+    /// <summary>
+    /// Failed the Falsifier's live re-verification: the mutation run itself could not produce
+    /// a result (process crash, missing tool), as opposed to the candidate's kill genuinely
+    /// failing to reproduce. The candidate had already killed real mutants on its first pass;
+    /// this is a tooling failure, not evidence the property is weak.
+    /// </summary>
+    FalsificationFailed,
 }

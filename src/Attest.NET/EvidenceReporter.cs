@@ -81,10 +81,12 @@ public sealed class EvidenceReporter : IEvidenceReporter
             {
                 // A transient failure on the re-verification run itself (not a real "the kill
                 // didn't reproduce" result) still must not deliver on stale evidence, and must
-                // not abort every other candidate's report either.
+                // not abort every other candidate's report either. Filed under its own reason,
+                // not Trivial: the candidate DID kill real mutants on the first pass, so
+                // "killed zero mutants, proving nothing" would be a false statement about it.
                 rejected.Add(new RejectedCandidate(
                     candidate,
-                    RejectionReason.Trivial,
+                    RejectionReason.FalsificationFailed,
                     "Re-verification run failed; stale proof dropped rather than delivered unverified."));
                 continue;
             }

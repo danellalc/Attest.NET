@@ -28,31 +28,63 @@ public class EvidenceReporterTests
         Assert.Equal("Orphan", exception.CandidateName);
     }
 
-    private sealed class ThrowingFalsifier : IFalsifier
+    // Throws only for the named candidate; every other candidate's re-verification "succeeds"
+    // by echoing back the exact kill it was originally given, as a real reproduction would. A
+    // single-candidate test cannot prove candidates are isolated from each other's failures: it
+    // cannot tell "this candidate was rejected, and everyone else was unaffected" apart from
+    // "this candidate was rejected in isolation with nothing else to affect".
+    private sealed class SelectivelyThrowingFalsifier : IFalsifier
     {
-        public Task<FalsificationResult> FalsifyAsync(SynthesizedTest test, MutationScope scope, CancellationToken cancellationToken) =>
-            throw new AttestFalsificationFailedException(test.Candidate.Name, "stryker crashed mid-run");
+        private readonly string _throwForCandidateName;
+        private readonly IReadOnlyDictionary<string, MutantKill> _reproducedKillByCandidateName;
+
+        public SelectivelyThrowingFalsifier(string throwForCandidateName, IReadOnlyDictionary<string, MutantKill> reproducedKillByCandidateName)
+        {
+            _throwForCandidateName = throwForCandidateName;
+            _reproducedKillByCandidateName = reproducedKillByCandidateName;
+        }
+
+        public Task<FalsificationResult> FalsifyAsync(SynthesizedTest test, MutationScope scope, CancellationToken cancellationToken)
+        {
+            if (test.Candidate.Name == _throwForCandidateName)
+                throw new AttestFalsificationFailedException(test.Candidate.Name, "stryker crashed mid-run");
+
+            return Task.FromResult(new FalsificationResult(test, [_reproducedKillByCandidateName[test.Candidate.Name]]));
+        }
     }
 
     [Fact]
-    public async Task BuildReportAsync_ReVerificationRunFails_RejectsOnlyThatCandidateInsteadOfAbortingTheWholeReport()
+    public async Task BuildReportAsync_ReVerificationRunFails_RejectsOnlyThatCandidateAndStillDeliversTheOther()
     {
-        var candidate = new PropertyCandidate("Flaky", "Kill exists, but re-verification itself crashes.", "body");
-        var test = new SynthesizedTest(candidate, "dummy.csproj", "Dummy.First", "Dummy.Second");
-        var validation = new ValidationResult(test, ValidationOutcome.Valid, null);
-        var falsification = new FalsificationResult(test, [new MutantKill("Arithmetic", "Add.cs", 10, 5, "a - b")]);
-        var reporter = new EvidenceReporter(new ThrowingFalsifier());
+        var flakyCandidate = new PropertyCandidate("Flaky", "Kill exists, but re-verification itself crashes.", "body");
+        var flakyTest = new SynthesizedTest(flakyCandidate, "dummy.csproj", "Flaky.First", "Flaky.Second");
+        var flakyValidation = new ValidationResult(flakyTest, ValidationOutcome.Valid, null);
+        var flakyKill = new MutantKill("Arithmetic", "Flaky.cs", 10, 5, "a - b");
+        var flakyFalsification = new FalsificationResult(flakyTest, [flakyKill]);
+
+        var healthyCandidate = new PropertyCandidate("Healthy", "Kill exists and reproduces cleanly.", "body");
+        var healthyTest = new SynthesizedTest(healthyCandidate, "dummy.csproj", "Healthy.First", "Healthy.Second");
+        var healthyValidation = new ValidationResult(healthyTest, ValidationOutcome.Valid, null);
+        var healthyKill = new MutantKill("Arithmetic", "Healthy.cs", 20, 5, "a - b");
+        var healthyFalsification = new FalsificationResult(healthyTest, [healthyKill]);
+
+        var reporter = new EvidenceReporter(new SelectivelyThrowingFalsifier(
+            "Flaky",
+            new Dictionary<string, MutantKill> { ["Healthy"] = healthyKill }));
         var scope = new MutationScope([], MaxMutants: 200);
 
         var report = await reporter.BuildReportAsync(
-            proposed: [candidate],
-            validations: [validation],
-            falsifications: [falsification],
+            proposed: [flakyCandidate, healthyCandidate],
+            validations: [flakyValidation, healthyValidation],
+            falsifications: [flakyFalsification, healthyFalsification],
             scope,
             CancellationToken.None);
 
-        Assert.Empty(report.Delivered);
         var rejection = Assert.Single(report.Rejected);
-        Assert.Equal(RejectionReason.Trivial, rejection.Reason);
+        Assert.Equal("Flaky", rejection.Candidate.Name);
+        Assert.Equal(RejectionReason.FalsificationFailed, rejection.Reason);
+
+        var delivered = Assert.Single(report.Delivered);
+        Assert.Equal("Healthy", delivered.Candidate.Name);
     }
 }
