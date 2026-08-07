@@ -19,17 +19,24 @@ public sealed class DiffScope : IDiffScope
     // initializer is the CLR's own thread-safe "run once" primitive.
     private static readonly bool MsBuildRegistered = RegisterMsBuildOnce();
 
+    /// <inheritdoc/>
     public async Task<DiffScopeResult> ComputeScopeAsync(string repositoryRoot, string baseRef, CancellationToken cancellationToken)
     {
         _ = MsBuildRegistered;
 
-        var changedLineRanges = await GitDiffParser.GetChangedLineRangesAsync(repositoryRoot, baseRef, cancellationToken).ConfigureAwait(false);
+        // Resolved once, reused for both the diff and project discovery: repositoryRoot is
+        // explicitly allowed to be any directory inside the repository, not just its root, and
+        // the two steps must agree on the same actual root or a subdirectory call silently
+        // misses caller projects that live outside it.
+        var realRoot = await GitDiffParser.ResolveRepositoryRootAsync(repositoryRoot, cancellationToken).ConfigureAwait(false);
+
+        var changedLineRanges = await GitDiffParser.GetChangedLineRangesAsync(realRoot, baseRef, cancellationToken).ConfigureAwait(false);
         if (changedLineRanges.Count == 0)
             return new DiffScopeResult([], []);
 
-        var projectPaths = DiscoverProjectPaths(repositoryRoot);
+        var projectPaths = DiscoverProjectPaths(realRoot);
         if (projectPaths.Count == 0)
-            throw new AttestDiffScopeFailedException(repositoryRoot, "No .csproj files found under the repository root.");
+            throw new AttestDiffScopeFailedException(realRoot, "No .csproj files found under the repository root.");
 
         using var workspace = MSBuildWorkspace.Create();
 

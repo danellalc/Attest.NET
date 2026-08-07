@@ -160,4 +160,34 @@ public class GitDiffParserTests
 
         Assert.Empty(result);
     }
+
+    [Fact]
+    public void ParseUnifiedDiff_NonAsciiFileName_ResolvesToTheRealPath()
+    {
+        // The exact bytes git itself produces (verified directly: `git diff` on a real
+        // repository with a file named café.cs), not a guessed format.
+        var diff = """
+            diff --git "a/caf\303\251.cs" "b/caf\303\251.cs"
+            --- /dev/null
+            +++ "b/caf\303\251.cs"
+            @@ -0,0 +1 @@
+            +public class Foo {}
+            """;
+
+        var result = GitDiffParser.ParseUnifiedDiff(diff, RepoRoot);
+
+        var file = Path.Combine(RepoRoot, "café.cs");
+        Assert.Equal([(1, 1)], result[file]);
+    }
+
+    [Theory]
+    [InlineData("plain.cs", "plain.cs")]
+    [InlineData("\"caf\\303\\251.cs\"", "café.cs")]
+    [InlineData("\"quote\\\".cs\"", "quote\".cs")]
+    [InlineData("\"back\\\\slash.cs\"", "back\\slash.cs")]
+    [InlineData("\"tab\\t.cs\"", "tab\t.cs")]
+    public void UnquoteGitPath_DecodesGitsCStyleQuoting(string raw, string expected)
+    {
+        Assert.Equal(expected, GitDiffParser.UnquoteGitPath(raw));
+    }
 }

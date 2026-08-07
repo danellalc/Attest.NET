@@ -94,6 +94,38 @@ public class DiffScopeTests
     }
 
     [Fact]
+    public async Task ComputeScopeAsync_RepositoryRootIsASubdirectory_StillFindsCallersOutsideIt()
+    {
+        // IDiffScope.ComputeScopeAsync's own doc explicitly allows repositoryRoot to be any
+        // directory inside the repository, not just its root; project discovery must resolve
+        // the true git root the same way the diff itself does, or a subdirectory call silently
+        // stops seeing callers that live outside that subdirectory.
+        WriteFixture();
+        await RunGitAsync("init", "-b", "main");
+        await RunGitAsync("add", ".");
+        var baseCommit = await CommitAsync("initial");
+
+        var calculatorPath = Path.Combine(_repositoryRoot, "Lib", "Calculator.cs");
+        await File.WriteAllTextAsync(calculatorPath, """
+            namespace Lib;
+
+            public class Calculator
+            {
+                public int Add(int a, int b) => a + b + 0;
+
+                internal int AddInternal(int a, int b) => a + b;
+            }
+            """);
+
+        var libSubdirectory = Path.Combine(_repositoryRoot, "Lib");
+
+        var scope = await new DiffScope().ComputeScopeAsync(libSubdirectory, baseCommit, CancellationToken.None);
+
+        Assert.Contains(scope.ChangedMethods, m => m.MethodName == "Add" && m.ContainingType == "Lib.Calculator");
+        Assert.Contains(scope.CallerMethods, m => m.MethodName == "UsePublic" && m.ContainingType == "Consumer.Usage");
+    }
+
+    [Fact]
     public async Task ComputeScopeAsync_BadBaseRef_ThrowsNamedException()
     {
         WriteFixture();
