@@ -71,4 +71,52 @@ public class ReportRendererTests
 
         Assert.Contains("$0.0025 (100 in / 50 out)", rendered);
     }
+
+    [Fact]
+    public void Render_ColorDefaultsToOff_NoEscapeCharacters()
+    {
+        var mutant = new MutantKill("Equality mutation", "/repo/Calculator.cs", 10, 5, "!=");
+        var report = new FunnelReport(1, [new DeliveredProperty(Candidate, mutant)], [], []);
+        var result = new AttestRunResult(report, new LlmUsage(100, 50, 0.01m), FromCache: false);
+
+        var rendered = ReportRenderer.Render(result);
+
+        Assert.DoesNotContain((char)0x1B, rendered);
+    }
+
+    [Fact]
+    public void Render_ColorEnabled_WrapsMarkersInEscapeCodes()
+    {
+        var mutant = new MutantKill("Equality mutation", "/repo/Calculator.cs", 10, 5, "!=");
+        var report = new FunnelReport(1, [new DeliveredProperty(Candidate, mutant)], [], []);
+        var result = new AttestRunResult(report, new LlmUsage(100, 50, 0.01m), FromCache: false);
+
+        var rendered = ReportRenderer.Render(result, useColor: true);
+
+        Assert.Contains((char)0x1B, rendered);
+        Assert.Contains("[OK]", rendered);
+    }
+
+    [Fact]
+    public void Render_NoProposedCandidates_FunnelBarSaysSo()
+    {
+        var result = new AttestRunResult(new FunnelReport(0, [], [], []), new LlmUsage(0, 0, 0m), FromCache: false);
+
+        var rendered = ReportRenderer.Render(result);
+
+        Assert.Contains("[no candidates to show]", rendered);
+    }
+
+    [Fact]
+    public void Render_AllDelivered_FunnelBarIsFullyFilled()
+    {
+        var mutant = new MutantKill("Equality mutation", "/repo/Calculator.cs", 10, 5, "!=");
+        var report = new FunnelReport(2, [new DeliveredProperty(Candidate, mutant), new DeliveredProperty(Candidate, mutant)], [], []);
+        var result = new AttestRunResult(report, new LlmUsage(0, 0, 0m), FromCache: false);
+
+        var rendered = ReportRenderer.Render(result);
+
+        var barLine = rendered.Split('\n')[1].TrimEnd('\r');
+        Assert.Equal("[##############################]", barLine);
+    }
 }
