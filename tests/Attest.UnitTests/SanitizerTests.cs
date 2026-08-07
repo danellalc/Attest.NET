@@ -216,14 +216,18 @@ public class SanitizerTests
     {
         // The AWS pattern used to cap its match at exactly 40 characters; a real secret longer
         // than that left its tail sitting in plain text right next to a tag that looked like
-        // the whole value had already been handled.
-        const string value = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEYEXTRAEXTRAEXTRA";
+        // the whole value had already been handled. The marker starts exactly at the old fixed
+        // 40-char boundary, so it lands entirely in the old regex's unredacted leftover: this
+        // test fails against the pre-fix {40} pattern and only passes against {40,}.
+        const string filler = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCd";
+        const string marker = "TAILMARKER12345";
+        const string value = filler + marker;
         var content = $"aws_secret_access_key = \"{value}\"";
 
         var result = _sanitizer.Sanitize(content);
 
         Assert.DoesNotContain(value, result.RedactedContent);
-        Assert.DoesNotContain("EXTRAEXTRAEXTRA", result.RedactedContent);
+        Assert.DoesNotContain(marker, result.RedactedContent);
     }
 
     [Fact]
@@ -255,5 +259,35 @@ public class SanitizerTests
 
         Assert.DoesNotContain("Sup3r;Secret!", result.RedactedContent);
         Assert.Contains(result.Findings, f => f.Category == "ConnectionStringPassword");
+    }
+
+    [Theory]
+    [InlineData("Password='Sup3r''Duper;Secret!';")]
+    [InlineData("Password=\"Sup3r\"\"Duper;Secret!\";")]
+    public void Sanitize_QuotedConnectionStringPasswordWithDoubledQuoteEscape_FullyRedacted(string passwordAssignment)
+    {
+        // Standard ADO.NET connection-string quoting: a literal quote inside a quoted value is
+        // escaped by doubling it ('it''s' means the value it's). The naive '[^']*' alternative
+        // stopped at that first doubled quote, leaking everything after it.
+        var content = $"Server=tcp:my.server.com;Database=prod;User Id=admin;{passwordAssignment}";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.DoesNotContain("Duper;Secret!", result.RedactedContent);
+        Assert.Contains(result.Findings, f => f.Category == "ConnectionStringPassword");
+    }
+
+    [Fact]
+    public void Sanitize_KeywordEmbeddedInsideALargerWord_DoesNotLowerTheThreshold()
+    {
+        // HasSecretContext must match "secret" as a whole word, not as a substring: "secretary"
+        // contains "secret" but has nothing to do with one. A plain Contains() check would
+        // wrongly lower the threshold for buildId below and silently redact an ordinary value.
+        var content = "var secretary = employees[0].FullName; var buildId = \"correcthorsebatterystaple12345678\";";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.Equal(content, result.RedactedContent);
+        Assert.Empty(result.Findings);
     }
 }

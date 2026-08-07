@@ -27,17 +27,6 @@ public sealed partial class Sanitizer : ISanitizer
     // when genuinely random.
     private const double EntropyThresholdWithContext = 3.5;
 
-    // Deliberately more specific than bare "key" or "token": both are extremely common in
-    // ordinary code (dictionary keys, CancellationToken, SyntaxToken) and would turn the
-    // lowered threshold above into a much bigger false-positive source than it is trying to
-    // fix.
-    private static readonly string[] SecretContextKeywords =
-    [
-        "secret", "password", "pwd", "apikey", "api_key", "api-key",
-        "accesstoken", "access_token", "access-token", "authtoken", "auth_token",
-        "credential", "privatekey", "private_key", "clientsecret", "client_secret", "bearer",
-    ];
-
     private static readonly (string Category, Func<Regex> Pattern)[] PatternDetectors =
     [
         ("AwsAccessKeyId", AwsAccessKeyIdPattern),
@@ -154,13 +143,7 @@ public sealed partial class Sanitizer : ISanitizer
         var lineStart = content.LastIndexOf('\n', Math.Max(0, candidateStart - 1)) + 1;
         var prefix = content[lineStart..candidateStart];
 
-        foreach (var keyword in SecretContextKeywords)
-        {
-            if (prefix.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        return false;
+        return SecretContextKeywordPattern().IsMatch(prefix);
     }
 
     private static bool Overlaps(int start1, int length1, int start2, int length2) =>
@@ -219,9 +202,23 @@ public sealed partial class Sanitizer : ISanitizer
     [GeneratedRegex(@"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]+:[^\s/@]+@")]
     private static partial Regex PasswordInUrlPattern();
 
-    [GeneratedRegex(@"\b(?:password|pwd)\s*=\s*(?:'[^']*'|""[^""]*""|[^;'""\s]+)", RegexOptions.IgnoreCase)]
+    // A quoted value can legitimately contain the SAME quote character, escaped by doubling it
+    // (standard ADO.NET connection-string quoting): 'it''s' means the literal value it's. The
+    // naive '[^']*' alternative stops at that first doubled quote, leaking everything after it.
+    [GeneratedRegex(@"\b(?:password|pwd)\s*=\s*(?:'(?:[^']|'')*'|""(?:[^""]|"""")*""|[^;'""\s]+)", RegexOptions.IgnoreCase)]
     private static partial Regex ConnectionStringPasswordPattern();
 
     [GeneratedRegex(@"[A-Za-z0-9+/_=-]{20,}")]
     private static partial Regex TokenCandidatePattern();
+
+    // Deliberately more specific than bare "key" or "token": both are extremely common in
+    // ordinary code (dictionary keys, CancellationToken, SyntaxToken) and would turn the
+    // lowered threshold above into a much bigger false-positive source than it is trying to
+    // fix. Word-bounded so "secretary" or "keychain" cannot match on the "secret"/"key"
+    // substring alone the way a plain Contains() check would.
+    [GeneratedRegex(
+        @"\b(?:secret|password|pwd|apikey|api_key|api-key|accesstoken|access_token|access-token|" +
+        @"authtoken|auth_token|credential|privatekey|private_key|clientsecret|client_secret|bearer)\b",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex SecretContextKeywordPattern();
 }
