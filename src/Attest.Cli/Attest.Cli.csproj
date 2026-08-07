@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Attest.Core\Attest.Core.csproj" />
+    <ProjectReference Include="..\Attest.NET\Attest.NET.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Attest.UnitTests" />
+    <InternalsVisibleTo Include="Attest.IntegrationTests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>attest</ToolCommandName>
+    <PackageId>Attest.Cli</PackageId>
+  </PropertyGroup>
+
+</Project>

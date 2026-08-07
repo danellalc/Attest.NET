@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Attest.Core\Attest.Core.csproj" />
     <ProjectReference Include="..\..\src\Attest.NET\Attest.NET.csproj" />
+    <ProjectReference Include="..\..\src\Attest.Cli\Attest.Cli.csproj" />
   </ItemGroup>
 
 </Project>

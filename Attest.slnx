@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Attest.Core/Attest.Core.csproj" />
     <Project Path="src/Attest.NET/Attest.NET.csproj" />
+    <Project Path="src/Attest.Cli/Attest.Cli.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Attest.IntegrationTests/Attest.IntegrationTests.csproj" />
