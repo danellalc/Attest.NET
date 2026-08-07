@@ -105,6 +105,53 @@ public class DiffScopeTests
             () => new DiffScope().ComputeScopeAsync(_repositoryRoot, "not-a-real-ref", CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ScopeThenSanitize_SecretPlantedInScopedFile_NeverSurvivesRedaction()
+    {
+        WriteFixture();
+        await RunGitAsync("init", "-b", "main");
+        await RunGitAsync("add", ".");
+        var baseCommit = await CommitAsync("initial");
+
+        const string plantedSecret = "AKIAIOSFODNN7EXAMPLE";
+        var calculatorPath = Path.Combine(_repositoryRoot, "Lib", "Calculator.cs");
+        await File.WriteAllTextAsync(calculatorPath, $$"""
+            namespace Lib;
+
+            public class Calculator
+            {
+                public int Add(int a, int b)
+                {
+                    // Planted on purpose: proves a secret in a DiffScope-scoped file never
+                    // survives the Sanitizer, however it got there.
+                    const string debugKey = "{{plantedSecret}}";
+                    return a + b;
+                }
+
+                internal int AddInternal(int a, int b) => a + b;
+            }
+            """);
+
+        var scope = await new DiffScope().ComputeScopeAsync(_repositoryRoot, baseCommit, CancellationToken.None);
+        var scopedFilePaths = scope.ChangedMethods.Select(m => m.FilePath)
+            .Concat(scope.CallerMethods.Select(m => m.FilePath))
+            .Distinct();
+
+        var sanitizer = new Sanitizer();
+        foreach (var filePath in scopedFilePaths)
+        {
+            var sourceCode = await File.ReadAllTextAsync(filePath);
+            var firstPass = sanitizer.Sanitize(sourceCode);
+            Assert.DoesNotContain(plantedSecret, firstPass.RedactedContent);
+
+            var renderedReport = $"## Evidence\n\nSource considered:\n\n```csharp\n{firstPass.RedactedContent}\n```\n";
+            var secondPass = sanitizer.Sanitize(renderedReport);
+            Assert.DoesNotContain(plantedSecret, secondPass.RedactedContent);
+        }
+
+        Assert.Contains(scope.ChangedMethods, m => m.FilePath == calculatorPath);
+    }
+
     private void WriteFixture()
     {
         Directory.CreateDirectory(Path.Combine(_repositoryRoot, "Lib"));
