@@ -39,7 +39,19 @@ internal static class ProcessRunner
                 standardError.AppendLine(e.Data);
         };
 
-        process.Start();
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
+        {
+            // Every caller already checks ProcessResult.Succeeded and raises its own named
+            // exception with the candidate/artifact it was operating on; returning a failed
+            // result here reuses that existing handling instead of leaking a raw framework
+            // exception for "the tool isn't on PATH", the one thing attest doctor checks for.
+            return new ProcessResult(-1, "", $"Could not start '{fileName}': {ex.Message}");
+        }
+
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 

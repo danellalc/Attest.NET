@@ -14,6 +14,7 @@ public sealed class Falsifier : IFalsifier
 {
     private static readonly string[] TestedStatuses = ["Killed", "Survived", "NoCoverage", "Timeout"];
 
+    /// <inheritdoc/>
     public async Task<FalsificationResult> FalsifyAsync(
         SynthesizedTest test,
         MutationScope scope,
@@ -31,27 +32,27 @@ public sealed class Falsifier : IFalsifier
         arguments.Add("Json");
         arguments.Add("--break-on-initial-test-failure");
 
-        var directoryLock = ScratchDirectoryLocks.For(scratchDirectory);
-        await directoryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-
         StrykerReport report;
-        try
+        await using (await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false))
         {
+            // Snapshotted before dotnet-stryker runs: only a report in a run directory that did
+            // not exist yet is actually proof of THIS invocation. A live re-verification call
+            // (EvidenceReporter) runs Stryker again on a scratch directory that already has an
+            // old report sitting in it; without this, a crash that produces no new report at
+            // all could silently fall back to the stale one instead of failing loudly.
+            var existingRunDirectories = GetRunDirectories(scratchDirectory);
+
             var runResult = await ProcessRunner.RunAsync(
                 "dotnet-stryker",
                 arguments,
                 scratchDirectory,
                 cancellationToken).ConfigureAwait(false);
 
-            var reportPath = FindLatestReport(scratchDirectory, deleteOlder: true);
+            var reportPath = FindLatestReport(scratchDirectory, existingRunDirectories, deleteOlder: true);
             if (reportPath is null)
                 throw new AttestFalsificationFailedException(test.Candidate.Name, runResult.CombinedOutput);
 
             report = await ParseReportAsync(test.Candidate.Name, reportPath, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            directoryLock.Release();
         }
 
         var scopedFilePaths = scope.FilePaths.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -107,14 +108,21 @@ public sealed class Falsifier : IFalsifier
             throw new AttestMutantCeilingExceededException(maxMutants, testedMutantCount);
     }
 
-    private static string? FindLatestReport(string scratchDirectory, bool deleteOlder)
+    private static IReadOnlySet<string> GetRunDirectories(string scratchDirectory)
+    {
+        var outputRoot = Path.Combine(scratchDirectory, "StrykerOutput");
+        return Directory.Exists(outputRoot) ? Directory.GetDirectories(outputRoot).ToHashSet() : new HashSet<string>();
+    }
+
+    private static string? FindLatestReport(string scratchDirectory, IReadOnlySet<string> existingRunDirectories, bool deleteOlder)
     {
         var outputRoot = Path.Combine(scratchDirectory, "StrykerOutput");
         if (!Directory.Exists(outputRoot))
             return null;
 
         var runDirectories = Directory.GetDirectories(outputRoot).OrderByDescending(directory => directory).ToList();
-        var latest = runDirectories
+        var newRunDirectories = runDirectories.Where(directory => !existingRunDirectories.Contains(directory)).ToList();
+        var latest = newRunDirectories
             .Select(directory => Path.Combine(directory, "reports", "mutation-report.json"))
             .FirstOrDefault(File.Exists);
 
@@ -139,16 +147,16 @@ public sealed class Falsifier : IFalsifier
 
     private static async Task<StrykerReport> ParseReportAsync(string candidateName, string reportPath, CancellationToken cancellationToken)
     {
-        await using var stream = File.OpenRead(reportPath);
         StrykerReport? report;
         try
         {
+            await using var stream = File.OpenRead(reportPath);
             report = await JsonSerializer.DeserializeAsync<StrykerReport>(stream, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            throw new AttestFalsificationFailedException(candidateName, $"Mutation report at '{reportPath}' could not be parsed: {ex.Message}");
+            throw new AttestFalsificationFailedException(candidateName, $"Mutation report at '{reportPath}' could not be read: {ex.Message}");
         }
 
         return report ?? throw new AttestFalsificationFailedException(candidateName, $"Mutation report at '{reportPath}' deserialized to null.");

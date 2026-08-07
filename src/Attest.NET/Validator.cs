@@ -13,16 +13,14 @@ public sealed class Validator : IValidator
 {
     private static readonly XNamespace TrxNamespace = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
 
+    /// <inheritdoc/>
     public async Task<ValidationResult> ValidateAsync(SynthesizedTest test, CancellationToken cancellationToken)
     {
         var scratchDirectory = Path.GetDirectoryName(test.ScratchProjectPath)!;
         const string trxFileName = "validate.trx";
 
-        var directoryLock = ScratchDirectoryLocks.For(scratchDirectory);
-        await directoryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-
         Dictionary<string, (string Outcome, string? Output)> results;
-        try
+        await using (await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false))
         {
             var runResult = await ProcessRunner.RunAsync(
                 "dotnet",
@@ -38,16 +36,12 @@ public sealed class Validator : IValidator
             {
                 results = ParseResults(trxPath);
             }
-            catch (XmlException ex)
+            catch (Exception ex) when (ex is XmlException or IOException or UnauthorizedAccessException)
             {
                 throw new AttestValidationFailedException(
                     test.Candidate.Name,
-                    $"The TRX result file at '{trxPath}' could not be parsed as XML: {ex.Message}\n\n{runResult.CombinedOutput}");
+                    $"The TRX result file at '{trxPath}' could not be read: {ex.Message}\n\n{runResult.CombinedOutput}");
             }
-        }
-        finally
-        {
-            directoryLock.Release();
         }
 
         if (!results.TryGetValue(test.FirstSeedTestName, out var first))

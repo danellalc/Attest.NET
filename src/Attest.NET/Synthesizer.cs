@@ -23,6 +23,7 @@ public sealed partial class Synthesizer : ISynthesizer
     // directories from an older Synthesizer version are never silently reused.
     private const string TemplateVersion = "1";
 
+    /// <inheritdoc/>
     public async Task<SynthesizedTest> SynthesizeAsync(
         PropertyCandidate candidate,
         string targetProjectPath,
@@ -45,45 +46,38 @@ public sealed partial class Synthesizer : ISynthesizer
             FirstSeedTestName: $"{testClassName}.{FirstSeedClassName(candidate)}.{candidate.Name}",
             SecondSeedTestName: $"{testClassName}.{SecondSeedClassName(candidate)}.{candidate.Name}");
 
-        var directoryLock = ScratchDirectoryLocks.For(scratchDirectory);
-        await directoryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (File.Exists(builtAssemblyPath))
-                return synthesizedTest;
+        await using var directoryLock = await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false);
 
-            Directory.CreateDirectory(scratchDirectory);
-
-            await File.WriteAllTextAsync(
-                Path.Combine(scratchDirectory, "Directory.Build.props"),
-                IsolatingBuildProps,
-                cancellationToken).ConfigureAwait(false);
-
-            await File.WriteAllTextAsync(
-                csprojPath,
-                BuildCsproj(targetFramework, targetProjectPath),
-                cancellationToken).ConfigureAwait(false);
-
-            await File.WriteAllTextAsync(
-                Path.Combine(scratchDirectory, $"{testClassName}.cs"),
-                BuildTestFile(testClassName, candidate),
-                cancellationToken).ConfigureAwait(false);
-
-            var buildResult = await ProcessRunner.RunAsync(
-                "dotnet",
-                ["build", csprojPath, "-c", "Release"],
-                scratchDirectory,
-                cancellationToken).ConfigureAwait(false);
-
-            if (!buildResult.Succeeded)
-                throw new AttestSynthesisFailedException(candidate.Name, buildResult.CombinedOutput);
-
+        if (File.Exists(builtAssemblyPath))
             return synthesizedTest;
-        }
-        finally
-        {
-            directoryLock.Release();
-        }
+
+        Directory.CreateDirectory(scratchDirectory);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(scratchDirectory, "Directory.Build.props"),
+            IsolatingBuildProps,
+            cancellationToken).ConfigureAwait(false);
+
+        await File.WriteAllTextAsync(
+            csprojPath,
+            BuildCsproj(targetFramework, targetProjectPath),
+            cancellationToken).ConfigureAwait(false);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(scratchDirectory, $"{testClassName}.cs"),
+            BuildTestFile(testClassName, candidate),
+            cancellationToken).ConfigureAwait(false);
+
+        var buildResult = await ProcessRunner.RunAsync(
+            "dotnet",
+            ["build", csprojPath, "-c", "Release"],
+            scratchDirectory,
+            cancellationToken).ConfigureAwait(false);
+
+        if (!buildResult.Succeeded)
+            throw new AttestSynthesisFailedException(candidate.Name, buildResult.CombinedOutput);
+
+        return synthesizedTest;
     }
 
     private static string FirstSeedClassName(PropertyCandidate candidate) => $"{candidate.Name}Tests_Seed1";
@@ -116,27 +110,70 @@ public sealed partial class Synthesizer : ISynthesizer
     }
 
     /// <summary>
-    /// Hashes the target project's own source so an edit to the target invalidates any scratch
-    /// build cached for a candidate whose own name and source text did not change.
+    /// Hashes the target project's own source, plus every project it references transitively,
+    /// so an edit to a referenced library invalidates any scratch build cached for a candidate
+    /// whose own name, source text, and direct target project text did not change.
     /// </summary>
-    private static string ComputeTargetFingerprint(string targetProjectPath)
+    internal static string ComputeTargetFingerprint(string targetProjectPath)
     {
-        var targetDirectory = Path.GetDirectoryName(targetProjectPath) ?? ".";
-        IEnumerable<string> sourceFiles = Directory.Exists(targetDirectory)
-            ? Directory.EnumerateFiles(targetDirectory, "*.cs", SearchOption.AllDirectories)
+        var combined = new StringBuilder();
+        var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AppendProjectFingerprint(targetProjectPath, combined, visitedProjects);
+        return ComputeContentHash(combined.ToString());
+    }
+
+    private static void AppendProjectFingerprint(string projectPath, StringBuilder combined, HashSet<string> visitedProjects)
+    {
+        var fullProjectPath = Path.GetFullPath(projectPath);
+        if (!visitedProjects.Add(fullProjectPath))
+            return;
+
+        var projectDirectory = Path.GetDirectoryName(fullProjectPath) ?? ".";
+        IEnumerable<string> sourceFiles = Directory.Exists(projectDirectory)
+            ? Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
                 .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
                     && !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(path => path, StringComparer.Ordinal)
             : Enumerable.Empty<string>();
 
-        var combined = new StringBuilder();
         foreach (var file in sourceFiles)
         {
             combined.Append(file).Append(' ');
             combined.Append(File.ReadAllText(file)).Append(' ');
         }
 
-        return ComputeContentHash(combined.ToString());
+        foreach (var referencedProjectPath in ReadProjectReferences(fullProjectPath, projectDirectory))
+            AppendProjectFingerprint(referencedProjectPath, combined, visitedProjects);
+    }
+
+    // Tolerates a referenced project whose own csproj cannot be parsed by simply not descending
+    // into it further: this fingerprint only feeds a cache key, and a genuinely broken
+    // referenced project already fails loudly later, at the real `dotnet build`.
+    private static IEnumerable<string> ReadProjectReferences(string projectPath, string projectDirectory)
+    {
+        var document = TryLoadProjectXml(projectPath);
+        if (document is null)
+            yield break;
+
+        foreach (var include in document.Descendants("ProjectReference")
+                     .Select(reference => reference.Attribute("Include")?.Value)
+                     .Where(value => !string.IsNullOrWhiteSpace(value)))
+            yield return Path.GetFullPath(Path.Combine(projectDirectory, include!));
+    }
+
+    private static XDocument? TryLoadProjectXml(string projectPath)
+    {
+        if (!File.Exists(projectPath))
+            return null;
+
+        try
+        {
+            return XDocument.Load(projectPath);
+        }
+        catch (Exception ex) when (ex is System.Xml.XmlException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private static string ComputeContentHash(string content)

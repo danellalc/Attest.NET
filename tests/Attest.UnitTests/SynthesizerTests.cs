@@ -46,4 +46,44 @@ public class SynthesizerTests
         var scratchEntriesAfter = Directory.Exists(scratchRoot) ? Directory.GetDirectories(scratchRoot).ToHashSet() : [];
         Assert.Equal(scratchEntriesBefore, scratchEntriesAfter);
     }
+
+    [Fact]
+    public void ComputeTargetFingerprint_EditToReferencedProjectSource_ChangesTheFingerprint()
+    {
+        // Editing a library the target project references (but not the target project's own
+        // files) used to leave the scratch build cache stale: nothing about the target
+        // project's own directory changed, so the old fingerprint kept matching.
+        var root = Path.Combine(Path.GetTempPath(), $"attest-fingerprint-{Guid.NewGuid():N}");
+        var libDirectory = Path.Combine(root, "Lib");
+        var consumerDirectory = Path.Combine(root, "Consumer");
+        Directory.CreateDirectory(libDirectory);
+        Directory.CreateDirectory(consumerDirectory);
+
+        try
+        {
+            var libProjectPath = Path.Combine(libDirectory, "Lib.csproj");
+            File.WriteAllText(libProjectPath, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(libDirectory, "Calculator.cs"), "public class Calculator { public int Add(int a, int b) => a + b; }");
+
+            var consumerProjectPath = Path.Combine(consumerDirectory, "Consumer.csproj");
+            File.WriteAllText(consumerProjectPath, $"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+                  <ItemGroup><ProjectReference Include="{libProjectPath}" /></ItemGroup>
+                </Project>
+                """);
+            File.WriteAllText(Path.Combine(consumerDirectory, "Usage.cs"), "public class Usage { }");
+
+            var fingerprintBefore = Synthesizer.ComputeTargetFingerprint(consumerProjectPath);
+
+            File.WriteAllText(Path.Combine(libDirectory, "Calculator.cs"), "public class Calculator { public int Add(int a, int b) => a + b + 0; }");
+            var fingerprintAfter = Synthesizer.ComputeTargetFingerprint(consumerProjectPath);
+
+            Assert.NotEqual(fingerprintBefore, fingerprintAfter);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
