@@ -60,6 +60,23 @@ public class DoctorCommandTests
         Assert.Contains("[OK] attest.json: provider=ollama, model=some-model-not-necessarily-pulled", rendered);
     }
 
+    [Fact]
+    public async Task RunAsync_CancelledBeforeCompletion_ReturnsCancelledExitCodeInsteadOfThrowingRaw()
+    {
+        // Program.cs now wires a real, user-driven CancellationToken into DoctorCommand (via
+        // Console.CancelKeyPress); before this fix, cancelling mid-check crashed with an
+        // unhandled OperationCanceledException instead of exiting cleanly like DiffCommand does.
+        var output = new StringWriter();
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var exitCode = await DoctorCommand.RunAsync(_repositoryRoot, output, cancellation.Token);
+
+        Assert.Equal(130, exitCode);
+        Assert.Contains("cancelled", output.ToString());
+    }
+
     private async Task<string> RunGitAsync(params string[] arguments)
     {
         var startInfo = new ProcessStartInfo

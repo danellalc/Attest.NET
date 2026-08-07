@@ -187,6 +187,77 @@ public class AttestRunnerTests
             r => r.Candidate.Name == "ValidatorWillCrash" && r.Reason == RejectionReason.ValidationFailed);
     }
 
+    [Fact]
+    public async Task RunAsync_ProposerReturnsTheSameCandidateTwice_TreatsItAsOneNotTwo()
+    {
+        // Two structurally-identical PropertyCandidate objects in one response are an expected
+        // input (EvidenceReporter's own GroupBy-plus-first already assumes this), not something
+        // that should be double-processed. Before deduplication, each occurrence ran through
+        // Synthesizer/Validator/Falsifier independently; if their outcomes ever diverged between
+        // occurrences, the same candidate could land in both Delivered and Rejected at once.
+        var projectDir = Path.Combine(_repositoryRoot, "Fixture3");
+        Directory.CreateDirectory(projectDir);
+
+        var csprojPath = Path.Combine(projectDir, "Fixture3.csproj");
+        await File.WriteAllTextAsync(csprojPath, """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+            </Project>
+            """);
+
+        var calculatorPath = Path.Combine(projectDir, "Calculator.cs");
+        await File.WriteAllTextAsync(calculatorPath, """
+            namespace Fixture3;
+
+            public class Calculator
+            {
+                public int Add(int a, int b) => a + b;
+            }
+            """);
+
+        await RunGitAsync("init", "-b", "main");
+        await RunGitAsync("add", ".");
+        var baseCommit = await CommitAsync("initial");
+
+        var marker = Guid.NewGuid().ToString("N");
+        await File.WriteAllTextAsync(calculatorPath, $$"""
+            namespace Fixture3;
+
+            public class Calculator
+            {
+                // test-marker: {{marker}}
+                public int Add(int a, int b) => a + b + 0;
+            }
+            """);
+
+        const string candidateJson = """
+            {"name": "AddIsCommutative", "description": "Addition does not depend on argument order.", "sourceCode": "[Property]\npublic bool AddIsCommutative(int a, int b)\n{\n    var calculator = new Fixture3.Calculator();\n    return calculator.Add(a, b) == calculator.Add(b, a);\n}"}
+            """;
+
+        // The exact same candidate object, twice, in the model's own response.
+        var provider = new FakeLlmProvider(new LlmResponse($"[{candidateJson}, {candidateJson}]", 100, 50, 0.001m));
+
+        var runner = new AttestRunner(
+            new DiffScope(),
+            new Sanitizer(),
+            new Proposer(provider),
+            new Synthesizer(),
+            new Validator(),
+            new Falsifier(),
+            new EvidenceReporter(new Falsifier()));
+
+        var result = await runner.RunAsync(_repositoryRoot, csprojPath, baseCommit, 200, CancellationToken.None);
+
+        Assert.Equal(1, result.Report.ProposedCount);
+        var appearances = result.Report.Delivered.Count(d => d.Candidate.Name == "AddIsCommutative")
+            + result.Report.Rejected.Count(r => r.Candidate.Name == "AddIsCommutative")
+            + result.Report.Quarantined.Count(q => q.Candidate.Name == "AddIsCommutative");
+        Assert.Equal(1, appearances);
+    }
+
     private async Task<string> CommitAsync(string message)
     {
         await RunGitAsync("-c", "user.name=attest-test", "-c", "user.email=attest-test@example.com", "commit", "-m", message);

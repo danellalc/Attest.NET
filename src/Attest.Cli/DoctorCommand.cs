@@ -9,35 +9,44 @@ internal static class DoctorCommand
 {
     internal static async Task<int> RunAsync(string repositoryRoot, TextWriter output, CancellationToken cancellationToken)
     {
-        var checks = new List<(string Name, bool Passed, string Detail)>
-        {
-            await CheckGitAsync(cancellationToken).ConfigureAwait(false),
-            await CheckGitNotShallowAsync(repositoryRoot, cancellationToken).ConfigureAwait(false),
-            await CheckDotnetAsync(cancellationToken).ConfigureAwait(false),
-            await CheckStrykerAsync(cancellationToken).ConfigureAwait(false),
-        };
-
-        AttestConfig? config = null;
         try
         {
-            config = AttestConfig.Load(repositoryRoot);
-            checks.Add(("attest.json", true, $"provider={config.Provider}, model={config.Model}"));
+            var checks = new List<(string Name, bool Passed, string Detail)>
+            {
+                await CheckGitAsync(cancellationToken).ConfigureAwait(false),
+                await CheckGitNotShallowAsync(repositoryRoot, cancellationToken).ConfigureAwait(false),
+                await CheckDotnetAsync(cancellationToken).ConfigureAwait(false),
+                await CheckStrykerAsync(cancellationToken).ConfigureAwait(false),
+            };
+
+            AttestConfig? config = null;
+            try
+            {
+                config = AttestConfig.Load(repositoryRoot);
+                checks.Add(("attest.json", true, $"provider={config.Provider}, model={config.Model}"));
+            }
+            catch (AttestCliException ex)
+            {
+                checks.Add(("attest.json", false, ex.Message));
+            }
+
+            if (config is not null)
+                checks.Add(await CheckProviderAsync(config, cancellationToken).ConfigureAwait(false));
+
+            foreach (var (name, passed, detail) in checks)
+                output.WriteLine($"  [{(passed ? "OK" : "FAIL")}] {name}: {detail}");
+
+            var allPassed = checks.All(c => c.Passed);
+            output.WriteLine();
+            output.WriteLine(allPassed ? "All checks passed." : "Some checks failed; see above before running attest --diff.");
+            return allPassed ? 0 : 1;
         }
-        catch (AttestCliException ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            checks.Add(("attest.json", false, ex.Message));
+            output.WriteLine();
+            output.WriteLine("attest: cancelled.");
+            return 130;
         }
-
-        if (config is not null)
-            checks.Add(await CheckProviderAsync(config, cancellationToken).ConfigureAwait(false));
-
-        foreach (var (name, passed, detail) in checks)
-            output.WriteLine($"  [{(passed ? "OK" : "FAIL")}] {name}: {detail}");
-
-        var allPassed = checks.All(c => c.Passed);
-        output.WriteLine();
-        output.WriteLine(allPassed ? "All checks passed." : "Some checks failed; see above before running attest --diff.");
-        return allPassed ? 0 : 1;
     }
 
     private static async Task<(string, bool, string)> CheckGitAsync(CancellationToken cancellationToken)
@@ -109,7 +118,8 @@ internal static class DoctorCommand
 
             return ("ollama", false, $"Server reachable at {baseUrl}, but model '{model}' is not pulled. Run: ollama pull {model}");
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException)
+        catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException)
+            && !cancellationToken.IsCancellationRequested)
         {
             return ("ollama", false, $"Could not reach Ollama at {baseUrl}: {ex.Message}");
         }
@@ -128,9 +138,10 @@ internal static class DoctorCommand
         foreach (var argument in arguments)
             startInfo.ArgumentList.Add(argument);
 
+        Process? process = null;
         try
         {
-            using var process = new Process { StartInfo = startInfo };
+            process = new Process { StartInfo = startInfo };
             process.Start();
             var output = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
             var errorOutput = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
@@ -141,6 +152,34 @@ internal static class DoctorCommand
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
         {
             return new ProcessCheckResult(false, ex.Message);
+        }
+        catch (OperationCanceledException)
+        {
+            // Unlike Attest.NET's ProcessRunner (used by the actual --diff pipeline), these
+            // checks are short-lived (git/dotnet --version, tool list), but the same rule
+            // applies: cancelling must not leave the child process running detached.
+            KillIfRunning(process);
+            throw;
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
+    private static void KillIfRunning(Process? process)
+    {
+        if (process is null)
+            return;
+
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between the HasExited check and Kill; nothing left to do.
         }
     }
 

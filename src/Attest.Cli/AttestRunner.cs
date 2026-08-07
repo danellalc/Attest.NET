@@ -55,6 +55,13 @@ internal sealed class AttestRunner
 
         var proposal = await _proposer.ProposeAsync(scopedSources, cancellationToken).ConfigureAwait(false);
 
+        // Deduplicated up front, not just tolerated downstream: EvidenceReporter's own
+        // GroupBy-plus-first already treats two value-equal candidates as one expected input,
+        // but iterating each occurrence separately here let the two copies diverge (one
+        // succeeding, one hitting a per-candidate catch below) and land the same candidate in
+        // both Delivered and Rejected at once, violating the "exactly one bucket" invariant.
+        var distinctCandidates = proposal.Candidates.Distinct().ToList();
+
         var mutationScope = new MutationScope(
             scope.ChangedMethods.Select(m => m.FilePath).Concat(scope.CallerMethods.Select(m => m.FilePath)).Distinct().ToList(),
             maxMutants);
@@ -70,7 +77,7 @@ internal sealed class AttestRunner
         var validations = new List<ValidationResult>();
         var falsifications = new List<FalsificationResult>();
 
-        foreach (var candidate in proposal.Candidates)
+        foreach (var candidate in distinctCandidates)
         {
             SynthesizedTest synthesized;
             try
@@ -122,7 +129,7 @@ internal sealed class AttestRunner
             .ConfigureAwait(false);
 
         var report = new FunnelReport(
-            proposal.Candidates.Count,
+            distinctCandidates.Count,
             coreReport.Delivered,
             [.. coreReport.Rejected, .. preFilteredRejections],
             coreReport.Quarantined);
