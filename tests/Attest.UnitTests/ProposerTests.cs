@@ -255,9 +255,38 @@ public class ProposerTests
         var candidate = Assert.Single(result.Candidates);
         Assert.DoesNotContain(secret, candidate.SourceCode);
 
-        var cacheKey = ProposalCache.ComputeCacheKey(scoped);
+        var cacheKey = ProposalCache.ComputeCacheKey(scoped, provider.Identity);
         var cached = ProposalCache.TryRead(cacheKey);
         Assert.NotNull(cached);
         Assert.DoesNotContain(secret, cached);
+    }
+
+    [Fact]
+    public async Task ProposeAsync_SameDiffDifferentProviderIdentity_CallsAgainInsteadOfReusingTheOtherProvidersCache()
+    {
+        // Caught testing against real code with a real Anthropic key: switching attest.json from
+        // Ollama to Anthropic on the exact same diff silently served the old Ollama-authored
+        // proposal back, with the report showing "cached proposal, no call made" -- the new
+        // provider was never actually called. Proposer.ProposeAsync is the integration point
+        // that must see a cache miss here, not just ProposalCache.ComputeCacheKey in isolation.
+        var marker = Guid.NewGuid().ToString("N");
+        var scoped = new[] { new ScopedSource("Fixture.Type", $"Method_{marker}", $"public bool Method_{marker}() => true;") };
+        var ollamaResponse = new LlmResponse(
+            $$"""[{"name": "FromOllama_{{marker}}", "description": "d", "sourceCode": "[Property]\npublic bool FromOllama_{{marker}}() => true;"}]""",
+            InputTokens: 100, OutputTokens: 50, EstimatedCostUsd: 0m);
+        var anthropicResponse = new LlmResponse(
+            $$"""[{"name": "FromAnthropic_{{marker}}", "description": "d", "sourceCode": "[Property]\npublic bool FromAnthropic_{{marker}}() => true;"}]""",
+            InputTokens: 100, OutputTokens: 50, EstimatedCostUsd: 0.01m);
+        var ollamaProvider = new FakeLlmProvider(ollamaResponse, identity: $"ollama:model-{marker}");
+        var anthropicProvider = new FakeLlmProvider(anthropicResponse, identity: $"anthropic:model-{marker}");
+
+        var fromOllama = await new Proposer(ollamaProvider).ProposeAsync(scoped, CancellationToken.None);
+        var fromAnthropic = await new Proposer(anthropicProvider).ProposeAsync(scoped, CancellationToken.None);
+
+        Assert.Equal(1, ollamaProvider.CallCount);
+        Assert.Equal(1, anthropicProvider.CallCount);
+        Assert.False(fromOllama.FromCache);
+        Assert.False(fromAnthropic.FromCache);
+        Assert.Equal($"FromAnthropic_{marker}", fromAnthropic.Candidates.Single().Name);
     }
 }

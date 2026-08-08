@@ -7,8 +7,10 @@ namespace Attest.NET;
 
 /// <summary>
 /// The only stage that calls an LLM. Builds one prompt per batch of scoped methods, parses
-/// the model's response into <see cref="PropertyCandidate"/>, and caches by content hash so
-/// the same diff never pays for or reproposes the same properties twice.
+/// the model's response into <see cref="PropertyCandidate"/>, and caches by content hash
+/// (scoped to the calling <see cref="ILlmProvider.Identity"/>) so the same diff against the
+/// same provider and model never pays for or reproposes the same properties twice; switching
+/// provider or model on the same diff is a cache miss, not a stale reuse of the old one's answer.
 /// </summary>
 public sealed class Proposer : IProposer
 {
@@ -29,7 +31,7 @@ public sealed class Proposer : IProposer
         if (scopedMethods.Count == 0)
             return new ProposalResult([], new LlmUsage(0, 0, 0m), FromCache: false);
 
-        var cacheKey = ProposalCache.ComputeCacheKey(scopedMethods);
+        var cacheKey = ProposalCache.ComputeCacheKey(scopedMethods, _provider.Identity);
         if (ProposalCache.TryRead(cacheKey) is { } cached)
             return new ProposalResult(ParseCandidates(cached), new LlmUsage(0, 0, 0m), FromCache: true);
 

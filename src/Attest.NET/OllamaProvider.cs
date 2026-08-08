@@ -22,6 +22,9 @@ public sealed class OllamaProvider : ILlmProvider
         _model = model;
     }
 
+    /// <inheritdoc/>
+    public string Identity => $"ollama:{_model}";
+
     // Ollama's `format` field constrains generation at the token/grammar level, not just via
     // prompt instruction: the model literally cannot emit a token that would violate this
     // shape. Without it, observed directly against real-world code (CliWrap): a 14B model

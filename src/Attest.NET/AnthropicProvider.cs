@@ -41,6 +41,9 @@ public sealed class AnthropicProvider : ILlmProvider
     }
 
     /// <inheritdoc/>
+    public string Identity => $"anthropic:{_model}";
+
+    /// <inheritdoc/>
     public async Task<LlmResponse> CompleteAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken)
     {
         if (!PricingUsd.TryGetValue(_model, out var pricing))

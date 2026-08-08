@@ -6,13 +6,14 @@ namespace Attest.NET;
 
 internal static class ProposalCache
 {
-    internal static string ComputeCacheKey(IReadOnlyList<ScopedSource> scopedMethods)
+    internal static string ComputeCacheKey(IReadOnlyList<ScopedSource> scopedMethods, string providerIdentity)
     {
         // Each field is hashed to a fixed 32-byte digest before being combined, not joined as
         // text with a delimiter: SanitizedSourceCode is real multi-line C# source that can
         // itself contain the delimiter, so two structurally different method lists could
         // otherwise flatten to the identical string and collide on the same cache key.
         using var combined = new MemoryStream();
+        combined.Write(SHA256.HashData(Encoding.UTF8.GetBytes(providerIdentity)));
         foreach (var method in scopedMethods)
         {
             combined.Write(SHA256.HashData(Encoding.UTF8.GetBytes(method.ContainingType)));

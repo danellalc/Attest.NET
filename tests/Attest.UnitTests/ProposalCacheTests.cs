@@ -21,8 +21,8 @@ public class ProposalCacheTests
             new ScopedSource("Foo", "Bar", "return 1;\nBaz\nQux\nreturn 2;"),
         };
 
-        var keyA = ProposalCache.ComputeCacheKey(twoMethods);
-        var keyB = ProposalCache.ComputeCacheKey(oneMethod);
+        var keyA = ProposalCache.ComputeCacheKey(twoMethods, "fake:test-model");
+        var keyB = ProposalCache.ComputeCacheKey(oneMethod, "fake:test-model");
 
         Assert.NotEqual(keyA, keyB);
     }
@@ -32,10 +32,26 @@ public class ProposalCacheTests
     {
         var methods = new[] { new ScopedSource("Foo", "Bar", "return 1;") };
 
-        var keyA = ProposalCache.ComputeCacheKey(methods);
-        var keyB = ProposalCache.ComputeCacheKey(methods);
+        var keyA = ProposalCache.ComputeCacheKey(methods, "fake:test-model");
+        var keyB = ProposalCache.ComputeCacheKey(methods, "fake:test-model");
 
         Assert.Equal(keyA, keyB);
+    }
+
+    [Fact]
+    public void ComputeCacheKey_SameMethodsDifferentProviderIdentity_ProducesDifferentKey()
+    {
+        // Caught testing against real code with a real Anthropic key: switching attest.json
+        // from Ollama to Anthropic on the exact same diff silently reused an old Ollama-authored
+        // proposal instead of calling the new provider at all, because the cache key was pure
+        // content hash with no notion of who answered it. A stale, already-known-bad proposal
+        // from one model kept being served forever as if it were a fresh answer from another.
+        var methods = new[] { new ScopedSource("Foo", "Bar", "return 1;") };
+
+        var ollamaKey = ProposalCache.ComputeCacheKey(methods, "ollama:qwen2.5-coder:14b");
+        var anthropicKey = ProposalCache.ComputeCacheKey(methods, "anthropic:claude-sonnet-5");
+
+        Assert.NotEqual(ollamaKey, anthropicKey);
     }
 
     [Fact]
