@@ -83,4 +83,55 @@ public class AttestConfigTests
 
         Assert.Equal(AttestConfig.DefaultMaxMutants, config.MaxMutants);
     }
+
+    [Fact]
+    public void Load_OpenAiCompatibleWithoutJsonMode_DefaultsToObject()
+    {
+        File.WriteAllText(Path.Combine(_directory, "attest.json"), """
+            {"provider": "openai-compatible", "model": "gpt-4o-mini", "baseUrl": "https://api.openai.com/v1"}
+            """);
+
+        var config = AttestConfig.Load(_directory);
+
+        Assert.Equal("https://api.openai.com/v1", config.BaseUrl);
+        Assert.Equal(AttestConfig.DefaultJsonMode, config.JsonMode);
+        Assert.Null(config.InputPricePerMillion);
+        Assert.Null(config.OutputPricePerMillion);
+    }
+
+    [Fact]
+    public void Load_OpenAiCompatibleWithPricingAndJsonMode_ReturnsThemVerbatim()
+    {
+        File.WriteAllText(Path.Combine(_directory, "attest.json"), """
+            {
+              "provider": "openai-compatible",
+              "model": "gpt-4o-mini",
+              "baseUrl": "https://api.openai.com/v1",
+              "jsonMode": "schema",
+              "inputPricePerMillion": 0.15,
+              "outputPricePerMillion": 0.60
+            }
+            """);
+
+        var config = AttestConfig.Load(_directory);
+
+        Assert.Equal("schema", config.JsonMode);
+        Assert.Equal(0.15m, config.InputPricePerMillion);
+        Assert.Equal(0.60m, config.OutputPricePerMillion);
+    }
+
+    [Fact]
+    public void Load_AnthropicOrOllamaConfig_LeavesNewFieldsAtDefaults()
+    {
+        // The three new fields only matter for "openai-compatible"; an existing attest.json for
+        // the other two providers must keep working unchanged, with no new required field.
+        File.WriteAllText(Path.Combine(_directory, "attest.json"), """
+            {"provider": "anthropic", "model": "claude-sonnet-5"}
+            """);
+
+        var config = AttestConfig.Load(_directory);
+
+        Assert.Null(config.BaseUrl);
+        Assert.Equal(AttestConfig.DefaultJsonMode, config.JsonMode);
+    }
 }

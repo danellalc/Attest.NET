@@ -66,10 +66,11 @@ internal static class ReportRenderer
 
         // Invariant culture, not the host machine's own: a USD amount must render the same
         // way in every report regardless of where attest runs.
-        var costUsd = result.Usage.EstimatedCostUsd.ToString("0.0000", CultureInfo.InvariantCulture);
         var costLine = result.FromCache
             ? "LLM cost: $0.0000 (cached proposal, no call made)"
-            : $"LLM cost: ${costUsd} ({result.Usage.InputTokens} in / {result.Usage.OutputTokens} out)";
+            : result.Usage.EstimatedCostUsd is { } costUsd
+                ? $"LLM cost: ${costUsd.ToString("0.0000", CultureInfo.InvariantCulture)} ({result.Usage.InputTokens} in / {result.Usage.OutputTokens} out)"
+                : $"LLM cost: not tracked, provider has no configured pricing ({result.Usage.InputTokens} in / {result.Usage.OutputTokens} out)";
         builder.AppendLine(Colorize(costLine, Cyan, useColor));
 
         return builder.ToString();

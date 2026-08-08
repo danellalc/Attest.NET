@@ -23,7 +23,7 @@ internal static class InitCommand
                 }
             }
 
-            output.Write("Provider [anthropic/ollama] (ollama): ");
+            output.Write("Provider [anthropic/ollama/openai-compatible] (ollama): ");
             var provider = TrimOrDefault(input.ReadLine(), "ollama").ToLowerInvariant();
 
             var defaultModel = provider switch
@@ -35,13 +35,20 @@ internal static class InitCommand
             output.Write($"Model ({defaultModel}): ");
             var model = TrimOrDefault(input.ReadLine(), defaultModel);
 
+            string? baseUrl = null;
+            if (provider == "openai-compatible")
+            {
+                output.Write("Base URL (e.g. https://api.openai.com/v1): ");
+                baseUrl = input.ReadLine()?.Trim();
+            }
+
             output.Write($"Max mutants per run ({AttestConfig.DefaultMaxMutants}): ");
             var maxMutantsInput = input.ReadLine();
             var maxMutants = int.TryParse(maxMutantsInput?.Trim(), out var parsed) && parsed > 0
                 ? parsed
                 : AttestConfig.DefaultMaxMutants;
 
-            var dto = new AttestConfig.AttestConfigDto(provider, model, maxMutants);
+            var dto = new AttestConfig.AttestConfigDto(provider, model, maxMutants, BaseUrl: baseUrl);
             File.WriteAllText(path, JsonSerializer.Serialize(dto, JsonOptions) + Environment.NewLine);
 
             output.WriteLine();
@@ -51,6 +58,8 @@ internal static class InitCommand
                 output.WriteLine("Set the ANTHROPIC_API_KEY environment variable before running attest --diff.");
             else if (provider == "ollama")
                 output.WriteLine("Run 'attest doctor' to check the local Ollama server and model are ready.");
+            else if (provider == "openai-compatible")
+                output.WriteLine("Set the LLM_API_KEY environment variable. Optionally hand-edit attest.json to add \"jsonMode\" (schema/object/none, default object) and \"inputPricePerMillion\"/\"outputPricePerMillion\" if you know your provider's pricing -- without them, cost is reported as not tracked, never guessed.");
 
             return 0;
         }

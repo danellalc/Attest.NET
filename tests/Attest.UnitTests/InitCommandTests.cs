@@ -103,9 +103,34 @@ public class InitCommandTests
 
         InitCommand.Run(_directory, new StringReader("\n\n\n"), output);
 
-        Assert.Contains("Provider [anthropic/ollama]", output.ToString());
+        Assert.Contains("Provider [anthropic/ollama/openai-compatible]", output.ToString());
         Assert.Contains("Model (", output.ToString());
         Assert.Contains("Max mutants per run", output.ToString());
+    }
+
+    [Fact]
+    public void Run_OpenAiCompatibleChoice_PromptsForBaseUrlAndWritesIt()
+    {
+        var exitCode = InitCommand.Run(_directory, new StringReader("openai-compatible\ngpt-4o-mini\nhttps://api.openai.com/v1\n\n"), TextWriter.Null);
+
+        Assert.Equal(0, exitCode);
+        var config = AttestConfig.Load(_directory);
+        Assert.Equal("openai-compatible", config.Provider);
+        Assert.Equal("gpt-4o-mini", config.Model);
+        Assert.Equal("https://api.openai.com/v1", config.BaseUrl);
+    }
+
+    [Fact]
+    public void Run_AnthropicOrOllamaChoice_NeverPromptsForBaseUrl()
+    {
+        // The base URL prompt is conditional on the provider choice; anthropic/ollama must
+        // consume exactly the same 3 lines of input they always did, or every existing script
+        // piping answers to `attest init` breaks the moment this feature ships.
+        var exitCode = InitCommand.Run(_directory, new StringReader("ollama\n\n\n"), TextWriter.Null);
+
+        Assert.Equal(0, exitCode);
+        var config = AttestConfig.Load(_directory);
+        Assert.Null(config.BaseUrl);
     }
 
     [Fact]

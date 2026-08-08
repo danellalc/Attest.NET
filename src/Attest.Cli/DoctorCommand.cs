@@ -100,7 +100,28 @@ internal static class DoctorCommand
         if (config.Provider.Equals("ollama", StringComparison.OrdinalIgnoreCase))
             return await CheckOllamaAsync(config.Model, cancellationToken).ConfigureAwait(false);
 
+        if (config.Provider.Equals("openai-compatible", StringComparison.OrdinalIgnoreCase))
+            return CheckOpenAiCompatible(config);
+
         return ("provider", false, $"Unknown provider '{config.Provider}'.");
+    }
+
+    private static (string, bool, string) CheckOpenAiCompatible(AttestConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(config.BaseUrl))
+            return ("openai-compatible", false, "attest.json is missing \"baseUrl\".");
+
+        var apiKey = Environment.GetEnvironmentVariable("LLM_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return ("openai-compatible", false, "LLM_API_KEY is not set.");
+
+        var pricingNote = config.InputPricePerMillion is not null && config.OutputPricePerMillion is not null
+            ? "pricing configured"
+            : "no pricing configured, cost will show as not tracked";
+
+        // Not verified against the endpoint, same reasoning as Anthropic: an arbitrary
+        // configured backend may not be free, so a live call here could cost money to check.
+        return ("openai-compatible", true, $"LLM_API_KEY is set, baseUrl='{config.BaseUrl}' ({pricingNote}). (Not verified against the endpoint.)");
     }
 
     private static async Task<(string, bool, string)> CheckOllamaAsync(string model, CancellationToken cancellationToken)

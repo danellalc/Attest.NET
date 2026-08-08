@@ -3,10 +3,18 @@ using System.Text.Json.Serialization;
 
 namespace Attest.Cli;
 
-internal sealed record AttestConfig(string Provider, string Model, int MaxMutants)
+internal sealed record AttestConfig(
+    string Provider,
+    string Model,
+    int MaxMutants,
+    string? BaseUrl,
+    string JsonMode,
+    decimal? InputPricePerMillion,
+    decimal? OutputPricePerMillion)
 {
     internal const string FileName = "attest.json";
     internal const int DefaultMaxMutants = 200;
+    internal const string DefaultJsonMode = "object";
 
     internal static AttestConfig Load(string repositoryRoot)
     {
@@ -37,8 +45,9 @@ internal sealed record AttestConfig(string Provider, string Model, int MaxMutant
         // root cause is this config value; init's own interactive prompt already falls back to
         // the default for the same input, so Load does too instead of trusting it verbatim.
         var maxMutants = dto.MaxMutants is > 0 ? dto.MaxMutants.Value : DefaultMaxMutants;
+        var jsonMode = string.IsNullOrWhiteSpace(dto.JsonMode) ? DefaultJsonMode : dto.JsonMode;
 
-        return new AttestConfig(dto.Provider, dto.Model, maxMutants);
+        return new AttestConfig(dto.Provider, dto.Model, maxMutants, dto.BaseUrl, jsonMode, dto.InputPricePerMillion, dto.OutputPricePerMillion);
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -46,5 +55,9 @@ internal sealed record AttestConfig(string Provider, string Model, int MaxMutant
     internal sealed record AttestConfigDto(
         [property: JsonPropertyName("provider")] string? Provider,
         [property: JsonPropertyName("model")] string? Model,
-        [property: JsonPropertyName("maxMutants")] int? MaxMutants);
+        [property: JsonPropertyName("maxMutants")] int? MaxMutants,
+        [property: JsonPropertyName("baseUrl")] string? BaseUrl = null,
+        [property: JsonPropertyName("jsonMode")] string? JsonMode = null,
+        [property: JsonPropertyName("inputPricePerMillion")] decimal? InputPricePerMillion = null,
+        [property: JsonPropertyName("outputPricePerMillion")] decimal? OutputPricePerMillion = null);
 }

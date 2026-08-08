@@ -73,6 +73,20 @@ public class ReportRendererTests
     }
 
     [Fact]
+    public void Render_NoPricingConfigured_ShowsNotTrackedInsteadOfAFakeZero()
+    {
+        // A null EstimatedCostUsd means an OpenAiCompatibleProvider with no pricing configured
+        // -- an arbitrary backend that might well be a paid one. Showing "$0.0000" here would
+        // read as "this call was free", which is not something Attest can know.
+        var result = new AttestRunResult(new FunnelReport(0, [], [], []), new LlmUsage(100, 50, null), FromCache: false);
+
+        var rendered = ReportRenderer.Render(result);
+
+        Assert.Contains("LLM cost: not tracked, provider has no configured pricing (100 in / 50 out)", rendered);
+        Assert.DoesNotContain("$0.0000", rendered);
+    }
+
+    [Fact]
     public void Render_ColorDefaultsToOff_NoEscapeCharacters()
     {
         var mutant = new MutantKill("Equality mutation", "/repo/Calculator.cs", 10, 5, "!=");

@@ -61,6 +61,59 @@ public class DoctorCommandTests
     }
 
     [Fact]
+    public async Task RunAsync_OpenAiCompatibleWithBaseUrlAndKey_PassesWithoutALiveNetworkCall()
+    {
+        // Same reasoning as the Anthropic check: an arbitrary configured backend may not be
+        // free, so doctor must not spend money confirming it actually answers.
+        await RunGitAsync("init", "-b", "main");
+        await File.WriteAllTextAsync(Path.Combine(_repositoryRoot, "attest.json"), """
+            {"provider": "openai-compatible", "model": "gpt-4o-mini", "baseUrl": "https://api.openai.com/v1"}
+            """);
+        var originalKey = Environment.GetEnvironmentVariable("LLM_API_KEY");
+        Environment.SetEnvironmentVariable("LLM_API_KEY", "sk-test");
+
+        try
+        {
+            var output = new StringWriter();
+
+            var exitCode = await DoctorCommand.RunAsync(_repositoryRoot, output, CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("[OK] openai-compatible", output.ToString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LLM_API_KEY", originalKey);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_OpenAiCompatibleWithoutBaseUrl_FailsWithActionableMessage()
+    {
+        await RunGitAsync("init", "-b", "main");
+        await File.WriteAllTextAsync(Path.Combine(_repositoryRoot, "attest.json"), """
+            {"provider": "openai-compatible", "model": "gpt-4o-mini"}
+            """);
+        var originalKey = Environment.GetEnvironmentVariable("LLM_API_KEY");
+        Environment.SetEnvironmentVariable("LLM_API_KEY", "sk-test");
+
+        try
+        {
+            var output = new StringWriter();
+
+            var exitCode = await DoctorCommand.RunAsync(_repositoryRoot, output, CancellationToken.None);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("[FAIL] openai-compatible", output.ToString());
+            Assert.Contains("baseUrl", output.ToString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LLM_API_KEY", originalKey);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_CancelledBeforeCompletion_ReturnsCancelledExitCodeInsteadOfThrowingRaw()
     {
         // Program.cs now wires a real, user-driven CancellationToken into DoctorCommand (via

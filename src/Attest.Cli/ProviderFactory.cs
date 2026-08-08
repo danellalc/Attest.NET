@@ -9,7 +9,8 @@ internal static class ProviderFactory
     {
         "anthropic" => CreateAnthropicProvider(config.Model),
         "ollama" => CreateOllamaProvider(config.Model),
-        _ => throw new AttestCliException($"Unknown provider '{config.Provider}'. Use \"anthropic\" or \"ollama\"."),
+        "openai-compatible" => CreateOpenAiCompatibleProvider(config),
+        _ => throw new AttestCliException($"Unknown provider '{config.Provider}'. Use \"anthropic\", \"ollama\", or \"openai-compatible\"."),
     };
 
     private static AnthropicProvider CreateAnthropicProvider(string model)
@@ -32,5 +33,32 @@ internal static class ProviderFactory
         // mid-generation.
         var httpClient = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromMinutes(15) };
         return new OllamaProvider(httpClient, model);
+    }
+
+    private static OpenAiCompatibleProvider CreateOpenAiCompatibleProvider(AttestConfig config)
+    {
+        var apiKey = Environment.GetEnvironmentVariable("LLM_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new AttestCliException("LLM_API_KEY is not set.");
+
+        if (string.IsNullOrWhiteSpace(config.BaseUrl))
+            throw new AttestCliException("attest.json must specify \"baseUrl\" for the \"openai-compatible\" provider.");
+
+        var jsonMode = config.JsonMode.ToLowerInvariant() switch
+        {
+            "schema" => JsonResponseMode.Schema,
+            "object" => JsonResponseMode.Object,
+            "none" => JsonResponseMode.None,
+            _ => throw new AttestCliException($"Unknown \"jsonMode\" '{config.JsonMode}'. Use \"schema\", \"object\", or \"none\"."),
+        };
+
+        (decimal, decimal)? pricing = config.InputPricePerMillion is { } input && config.OutputPricePerMillion is { } output
+            ? (input, output)
+            : null;
+
+        // Same 15-minute allowance as Ollama: a self-hosted OpenAI-compatible server behind this
+        // config is just as likely to be running on modest local hardware as Ollama itself is.
+        var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(15) };
+        return new OpenAiCompatibleProvider(httpClient, apiKey, config.Model, config.BaseUrl, jsonMode, pricing);
     }
 }
