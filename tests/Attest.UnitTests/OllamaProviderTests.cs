@@ -33,6 +33,27 @@ public class OllamaProviderTests
     }
 
     [Fact]
+    public async Task CompleteAsync_SendsAJsonSchemaFormatConstraint()
+    {
+        // Without this, a small local model can ignore "respond with JSON only" entirely
+        // (observed directly: a 14B model wrote a prose explanation instead) or produce
+        // almost-JSON with broken string escaping (observed with a 7B model). Ollama's `format`
+        // field constrains generation at the token level, not just via prompt wording.
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(SuccessBody, Encoding.UTF8, "application/json"),
+        });
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:11434") };
+        var provider = new OllamaProvider(httpClient, "llama3");
+
+        await provider.CompleteAsync("system", "user", CancellationToken.None);
+
+        Assert.Contains("\"format\":{", handler.LastRequestBody);
+        Assert.Contains("\"type\":\"array\"", handler.LastRequestBody);
+        Assert.Contains("\"required\":[\"name\",\"sourceCode\"]", handler.LastRequestBody);
+    }
+
+    [Fact]
     public async Task CompleteAsync_ParsesMessageContentAndTokenCounts()
     {
         var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)

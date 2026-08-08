@@ -22,6 +22,28 @@ public sealed class OllamaProvider : ILlmProvider
         _model = model;
     }
 
+    // Ollama's `format` field constrains generation at the token/grammar level, not just via
+    // prompt instruction: the model literally cannot emit a token that would violate this
+    // shape. Without it, observed directly against real-world code (CliWrap): a 14B model
+    // ignored "respond with JSON only" entirely and wrote a prose explanation instead, and a 7B
+    // model attempted JSON but produced unescaped quotes inside string values. Both are exactly
+    // the class of failure a JSON schema constraint prevents by construction.
+    private static readonly object ResponseFormatSchema = new
+    {
+        type = "array",
+        items = new
+        {
+            type = "object",
+            properties = new
+            {
+                name = new { type = "string" },
+                description = new { type = "string" },
+                sourceCode = new { type = "string" },
+            },
+            required = new[] { "name", "sourceCode" },
+        },
+    };
+
     /// <inheritdoc/>
     public async Task<LlmResponse> CompleteAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken)
     {
@@ -29,6 +51,7 @@ public sealed class OllamaProvider : ILlmProvider
             _model,
             [new OllamaMessageDto("system", systemPrompt), new OllamaMessageDto("user", userPrompt)],
             Stream: false,
+            ResponseFormatSchema,
             // Structured JSON output needs the model to stop rambling, not explore: low
             // temperature, and a repeat penalty high enough to stop the word-stuttering
             // ("never returns returns") that a default-sampled small local model produces
@@ -90,6 +113,7 @@ public sealed class OllamaProvider : ILlmProvider
         [property: JsonPropertyName("model")] string Model,
         [property: JsonPropertyName("messages")] List<OllamaMessageDto> Messages,
         [property: JsonPropertyName("stream")] bool Stream,
+        [property: JsonPropertyName("format")] object Format,
         [property: JsonPropertyName("options")] OllamaOptionsDto Options);
 
     private sealed record OllamaOptionsDto(

@@ -99,9 +99,12 @@ public sealed class Proposer : IProposer
     // a last-resort fallback, so a stray empty pair before the real array never wins over it.
     private static string ExtractJsonArray(string rawResponse)
     {
+        var start = rawResponse.IndexOf('[');
+        if (start < 0)
+            throw new AttestProposalFailedException("no JSON array found in the response.", rawResponse);
+
         string? fallback = null;
 
-        var start = rawResponse.IndexOf('[');
         while (start >= 0)
         {
             if (IsPlausibleArrayStart(rawResponse, start))

@@ -71,7 +71,14 @@ public class ProposerTests
     [Fact]
     public void ParseCandidates_NoJsonArrayInResponse_ThrowsNamedException()
     {
-        Assert.Throws<AttestProposalFailedException>(() => Proposer.ParseCandidates("I could not find a property to propose."));
+        // Caught testing against a real model's response (qwen2.5-coder:14b explaining CliWrap's
+        // Command.Execution.cs in prose instead of proposing anything): a refactor had merged
+        // this into the same "no balanced JSON array" message the loop-exhausted case uses,
+        // which is misleading when there was never a '[' to begin with.
+        var exception = Assert.Throws<AttestProposalFailedException>(
+            () => Proposer.ParseCandidates("I could not find a property to propose."));
+
+        Assert.Contains("no JSON array found", exception.Message);
     }
 
     [Fact]
