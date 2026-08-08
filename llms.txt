@@ -9,7 +9,7 @@ Note: search for "Attest.NET"; an unrelated `Attest.*` fakes-framework family ex
 - Package: `Attest.NET` (library), `Attest.Cli` (dotnet tool)
 - Targets: `net8.0`, `net10.0`
 - Stack: FsCheck v3 + xUnit + Stryker.NET
-- LLM: Anthropic or Ollama (fully local); bring your own key
+- LLM: Anthropic, Ollama (fully local), or any OpenAI-compatible endpoint; bring your own key
 - License: MIT
 - Status: in development
 
@@ -66,6 +66,21 @@ Known limitation: secrets are not available to fork PRs on GitHub. For public re
   "maxMutants": 200
 }
 ```
+
+`provider` is `"anthropic"`, `"ollama"`, or `"openai-compatible"`. The third one reaches any backend speaking the OpenAI Chat Completions API shape (OpenAI, Groq, DeepSeek, Together, a self-hosted vLLM/llama.cpp server) and needs two more fields:
+
+```json
+{
+  "provider": "openai-compatible",
+  "model": "gpt-4o-mini",
+  "baseUrl": "https://api.openai.com/v1",
+  "jsonMode": "object",
+  "inputPricePerMillion": 0.15,
+  "outputPricePerMillion": 0.60
+}
+```
+
+`baseUrl` is required for `openai-compatible`; the API key comes from the `LLM_API_KEY` environment variable (not `ANTHROPIC_API_KEY`, which is Anthropic-only). `jsonMode` (`"schema"` / `"object"` / `"none"`, default `"object"`) controls how hard the response is constrained to JSON -- not every backend supports `"schema"` (full structured output), so this is config, not auto-detected, and there is no automatic fallback (the design forbids retry loops: a backend that rejects the configured mode fails the call, not a second request with a different one). `inputPricePerMillion`/`outputPricePerMillion` are optional; without both, the report shows LLM cost as not tracked rather than guessing or showing a misleading `$0.00`.
 
 Run `attest init` to generate this file interactively instead of writing it by hand. `maxLlmCost`, `failOnSecret`, `quarantineRetries` and `webhookUrl` are not real fields today — a per-run cost ceiling, secret-scan gating and webhook notifications are all v1.x/roadmap; passing them is silently ignored, not an error.
 

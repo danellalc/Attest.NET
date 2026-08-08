@@ -106,9 +106,14 @@ Whole-repo mutation is infeasible at scale: [Petrović & Ivanković (Google, ICS
 
 The report claims "this property killed this mutant". Attest re-runs that exact pair before emitting. A tool whose entire pitch is "carry proof" cannot afford a stale one.
 
-### Why two LLM providers at v1, not three
+### Why a generic provider instead of one per vendor
 
-Anthropic (hosted) and Ollama (fully local, air-gap capable) cover both trust postures. A third provider is config plumbing that can wait for an issue; cutting it protects the schedule where the real risk lives (the Synthesizer).
+Anthropic (hosted) and Ollama (fully local, air-gap capable) cover both trust postures, and were the whole of v1's provider surface for a while: a bespoke provider per vendor is config plumbing that never ends. `OpenAiCompatibleProvider` opens this up properly instead: one provider, config-only (base URL, model, API key), that reaches OpenAI, Groq, DeepSeek, Together, a self-hosted vLLM/llama.cpp server, or anything else speaking the same de facto standard API shape.
+
+Real testing against a real repo is what forced this design's two honest limits, both deliberate rather than oversights:
+
+- **JSON reliability is not guaranteed.** The `format`-constrained-generation fix that made Ollama's small local models reliable is Ollama-specific; not every OpenAI-compatible backend supports strict structured output the same way. `jsonMode` (`schema` / `object` / `none`) is config, not auto-detected — the design's "no retry loops" rule means Attest will not silently downgrade and retry on a rejected parameter; a backend that does not support the configured mode fails the call loudly instead.
+- **Cost cannot be assumed.** Anthropic ships a hardcoded, maintained pricing table and refuses to run for a model it does not have a price for, because guessing would be worse than refusing. A generic endpoint has no such table to maintain — pricing is optional config (`inputPricePerMillion`/`outputPricePerMillion`); without it, the report shows cost as explicitly not tracked, never a silent `$0.00` that would read as "this was free" for a backend that might not be.
 
 ### Why FsCheck over CsCheck for v1
 

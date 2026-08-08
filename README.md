@@ -63,7 +63,7 @@ Attest sends scoped source code to the LLM provider **you** configure, and nowhe
 
 - The **Sanitizer** stage (deterministic, no network) scans scoped code for secrets before any proposal call, and redacts them. There is no opt-out.
 - The same scan runs **again** on the report before it is rendered: a report is meant to be shared, and defense in depth is cheaper than an incident.
-- **Fully local is a first-class path:** set `"provider": "ollama"` in `attest.json` and code never leaves the machine — no Anthropic call is ever made.
+- **Fully local is a first-class path:** set `"provider": "ollama"` in `attest.json` and code never leaves the machine — no hosted call is ever made.
 - Diff scoping pulls in direct callers of changed methods, code you may not have looked at in this PR. That is exactly why the Sanitizer is not optional.
 
 ## Language-agnostic by design
@@ -93,7 +93,7 @@ The adapter contract goes public when the first external adapter has a consumer 
 |---|---|
 | `net10.0`, `net8.0` | v1 target |
 | xUnit + FsCheck v3 | v1 target |
-| LLM providers | Anthropic, Ollama (fully local) at v1 |
+| LLM providers | Anthropic, Ollama (fully local), or any OpenAI-compatible endpoint (OpenAI, Groq, DeepSeek, a self-hosted server) |
 
 ## Compared to
 
