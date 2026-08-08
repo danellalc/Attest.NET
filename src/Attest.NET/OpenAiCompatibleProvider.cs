@@ -81,32 +81,53 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
     // string, and the proposal cache must not treat their answers as interchangeable.
     public string Identity => $"openai-compatible:{_baseUrl}:{_model}";
 
-    // The same shape Ollama's `format` field constrains against; reused here as the "schema"
-    // json mode's payload, since both are enforcing the identical proposal structure.
+    // "json_object" and "json_schema" response formats constrain the TOP-LEVEL shape of the
+    // response to an object, not an array, in several real OpenAI-compatible implementations
+    // (confirmed directly against Ollama's own OpenAI-compatible endpoint: asked for a bare
+    // JSON array under "json_object" mode, got a single bare object back instead, no array at
+    // all). Proposer's shared prompt asks for a bare array; rather than change that prompt per
+    // provider, both constrained modes ask for the array wrapped in a single "properties" key
+    // instead, and UnwrapPropertiesArray below extracts it back out before Proposer ever sees
+    // the text, so Proposer itself stays provider-agnostic.
+    private const string WrapperInstruction =
+        "\n\nRespond with a single JSON object of the shape {\"properties\": [...]}, where the " +
+        "array is exactly what was described above. Do not respond with a bare array at the top " +
+        "level; wrap it in a \"properties\" key.";
+
     private static readonly object ResponseSchema = new
     {
-        type = "array",
-        items = new
+        type = "object",
+        properties = new
         {
-            type = "object",
             properties = new
             {
-                name = new { type = "string" },
-                description = new { type = "string" },
-                sourceCode = new { type = "string" },
+                type = "array",
+                items = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        name = new { type = "string" },
+                        description = new { type = "string" },
+                        sourceCode = new { type = "string" },
+                    },
+                    required = new[] { "name", "sourceCode" },
+                },
             },
-            required = new[] { "name", "sourceCode" },
         },
+        required = new[] { "properties" },
     };
 
     /// <inheritdoc/>
     public async Task<LlmResponse> CompleteAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken)
     {
+        var effectiveSystemPrompt = _jsonMode == JsonResponseMode.None ? systemPrompt : systemPrompt + WrapperInstruction;
+
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
         request.Content = JsonContent.Create(new OpenAiRequestDto(
             _model,
-            [new OpenAiMessageDto("system", systemPrompt), new OpenAiMessageDto("user", userPrompt)],
+            [new OpenAiMessageDto("system", effectiveSystemPrompt), new OpenAiMessageDto("user", userPrompt)],
             MaxResponseTokens,
             BuildResponseFormat()));
 
@@ -144,7 +165,8 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
             if (body is null || body.Choices.Count == 0)
                 throw new AttestProposalFailedException($"Response body from '{_baseUrl}' had no choices.", "");
 
-            var text = body.Choices[0].Message.Content;
+            var rawText = body.Choices[0].Message.Content;
+            var text = _jsonMode == JsonResponseMode.None ? rawText : UnwrapPropertiesArray(rawText);
             var cost = _pricing is { } pricing
                 ? body.Usage.PromptTokens / 1_000_000m * pricing.InputPerMillion
                     + body.Usage.CompletionTokens / 1_000_000m * pricing.OutputPerMillion
@@ -156,11 +178,36 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
 
     private object? BuildResponseFormat() => _jsonMode switch
     {
-        JsonResponseMode.Schema => new { type = "json_schema", json_schema = new { name = "properties", strict = true, schema = ResponseSchema } },
+        JsonResponseMode.Schema => new { type = "json_schema", json_schema = new { name = "attest_property_proposals", strict = true, schema = ResponseSchema } },
         JsonResponseMode.Object => new { type = "json_object" },
         JsonResponseMode.None => null,
         _ => throw new ArgumentOutOfRangeException(nameof(_jsonMode), _jsonMode, "Unknown JsonResponseMode."),
     };
+
+    // Both constrained modes wrap the array in {"properties": [...]} (see WrapperInstruction);
+    // this undoes that so Proposer, which expects a bare array, never has to know this provider
+    // exists. GetRawText() re-serializes the array exactly as received, not re-encoded from a
+    // deserialized model, so nothing about the candidates' own content can be altered here.
+    private static string UnwrapPropertiesArray(string rawText)
+    {
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(rawText);
+        }
+        catch (JsonException ex)
+        {
+            throw new AttestProposalFailedException($"Response was not a JSON object: {ex.Message}", rawText);
+        }
+
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("properties", out var propertiesElement))
+                throw new AttestProposalFailedException("Response JSON did not contain a \"properties\" array as instructed.", rawText);
+
+            return propertiesElement.GetRawText();
+        }
+    }
 
     private static async Task<string> ReadBodySafelyAsync(HttpResponseMessage httpResponse, CancellationToken cancellationToken)
     {
