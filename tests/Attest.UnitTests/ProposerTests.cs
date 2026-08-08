@@ -136,6 +136,22 @@ public class ProposerTests
         Assert.Equal("Foo", candidate.Name);
     }
 
+    [Fact]
+    public void ParseCandidates_ProseOnlyResponseMentioningStrayArrayType_ThrowsInsteadOfSilentlyReturningEmpty()
+    {
+        // IsPlausibleArrayStart used to accept an immediate '[' -> ']' close as a plausible
+        // start (to allow a genuinely empty response), which meant a stray "int[]" mention in a
+        // pure-prose response (no real array anywhere) produced the exact same "[]" match as a
+        // real empty proposal, silently returning zero candidates instead of surfacing that the
+        // response was actually malformed. The genuinely-empty case is now only recognized when
+        // "[]" is the entire trimmed response, not merely embedded in unrelated text.
+        var response = "The signature takes an int[] parameter, but I cannot propose anything for it.";
+
+        var exception = Assert.Throws<AttestProposalFailedException>(() => Proposer.ParseCandidates(response));
+
+        Assert.Contains("no balanced JSON array found", exception.Message);
+    }
+
     [Theory]
     [InlineData("""[{"description": "d", "sourceCode": "code"}]""")]
     [InlineData("""[{"name": "Foo", "description": "d"}]""")]
@@ -213,5 +229,35 @@ public class ProposerTests
         Assert.True(second.FromCache);
         Assert.Equal(0m, second.Usage.EstimatedCostUsd);
         Assert.Equal(first.Candidates.Single().Name, second.Candidates.Single().Name);
+    }
+
+    [Fact]
+    public async Task ProposeAsync_ResponseContainsASecret_SanitizesBeforeCachingAndBeforeReturningTheCandidate()
+    {
+        // Only the inbound direction (source code into the prompt) was ever sanitized; the raw
+        // model response was cached to disk and turned into a candidate's SourceCode completely
+        // unsanitized. If the model ever echoes back (or hallucinates) something secret-shaped,
+        // this was the one place nothing caught it before it reached a persistent cache file or
+        // a real, never-deleted scratch .cs file.
+        var marker = Guid.NewGuid().ToString("N");
+        var scoped = new[] { new ScopedSource("Fixture.Type", $"Method_{marker}", $"public bool Method_{marker}() => true;") };
+        const string secret = "AKIAIOSFODNN7EXAMPLE";
+        var response = new LlmResponse(
+            $$"""[{"name": "Prop_{{marker}}", "description": "d", "sourceCode": "[Property]\npublic bool Prop_{{marker}}() => true; // {{secret}}"}]""",
+            InputTokens: 100,
+            OutputTokens: 50,
+            EstimatedCostUsd: 0.01m);
+        var provider = new FakeLlmProvider(response);
+        var proposer = new Proposer(provider);
+
+        var result = await proposer.ProposeAsync(scoped, CancellationToken.None);
+
+        var candidate = Assert.Single(result.Candidates);
+        Assert.DoesNotContain(secret, candidate.SourceCode);
+
+        var cacheKey = ProposalCache.ComputeCacheKey(scoped);
+        var cached = ProposalCache.TryRead(cacheKey);
+        Assert.NotNull(cached);
+        Assert.DoesNotContain(secret, cached);
     }
 }

@@ -32,7 +32,13 @@ internal sealed record AttestConfig(string Provider, string Model, int MaxMutant
         if (dto is null || string.IsNullOrWhiteSpace(dto.Provider) || string.IsNullOrWhiteSpace(dto.Model))
             throw new AttestCliException($"'{path}' must specify non-empty \"provider\" and \"model\" fields.");
 
-        return new AttestConfig(dto.Provider, dto.Model, dto.MaxMutants ?? DefaultMaxMutants);
+        // A hand-edited "maxMutants": 0 (or a negative value) trips Falsifier.VerifyCeiling on
+        // the very first tested mutant, aborting with a message that gives no hint the actual
+        // root cause is this config value; init's own interactive prompt already falls back to
+        // the default for the same input, so Load does too instead of trusting it verbatim.
+        var maxMutants = dto.MaxMutants is > 0 ? dto.MaxMutants.Value : DefaultMaxMutants;
+
+        return new AttestConfig(dto.Provider, dto.Model, maxMutants);
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };

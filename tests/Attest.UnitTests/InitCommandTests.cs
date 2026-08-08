@@ -107,4 +107,20 @@ public class InitCommandTests
         Assert.Contains("Model (", output.ToString());
         Assert.Contains("Max mutants per run", output.ToString());
     }
+
+    [Fact]
+    public void Run_CannotWriteTheFile_ReturnsExitCodeOneWithAnActionableMessageInsteadOfThrowingRaw()
+    {
+        // Unlike DiffCommand.RunAsync and DoctorCommand.RunAsync (both wrap their whole body
+        // into an "attest: ..." message plus a defined exit code), InitCommand.Run had no
+        // exception handling anywhere; a filesystem failure while writing attest.json propagated
+        // as a raw, unhandled .NET exception with a non-standard exit code instead.
+        var missingParent = Path.Combine(_directory, "does-not-exist", "still-does-not-exist");
+        var output = new StringWriter();
+
+        var exitCode = InitCommand.Run(missingParent, new StringReader("\n\n\n"), output);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("attest:", output.ToString());
+    }
 }

@@ -27,7 +27,17 @@ public enum RejectionReason
     /// Failed the Falsifier's live re-verification: the mutation run itself could not produce
     /// a result (process crash, missing tool), as opposed to the candidate's kill genuinely
     /// failing to reproduce. The candidate had already killed real mutants on its first pass;
-    /// this is a tooling failure, not evidence the property is weak.
+    /// this is a tooling failure, not evidence the property is weak. Also used for a mutant
+    /// count mismatch (Stryker tested outside the requested scope): a scope inconsistency, not
+    /// a genuine falsification-tooling crash either, but not evidence about the candidate's
+    /// quality any more than the tooling-crash case is.
     /// </summary>
     FalsificationFailed,
+
+    /// <summary>
+    /// Failed the Falsifier: the diff's scoped files produced more tested mutants than the
+    /// configured ceiling allows. Not a quality signal about this specific candidate; the same
+    /// ceiling applies to every candidate sharing this run's mutation scope.
+    /// </summary>
+    MutantCeilingExceeded,
 }

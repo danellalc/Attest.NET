@@ -90,6 +90,22 @@ public sealed class EvidenceReporter : IEvidenceReporter
                     "Re-verification run failed; stale proof dropped rather than delivered unverified."));
                 continue;
             }
+            catch (AttestMutantCountMismatchException ex)
+            {
+                // Sibling AttestException, not a subtype of AttestFalsificationFailedException
+                // above; the same whole-report-discarding effect applies if left uncaught here.
+                rejected.Add(new RejectedCandidate(candidate, RejectionReason.FalsificationFailed, ex.Message));
+                continue;
+            }
+            catch (AttestMutantCeilingExceededException ex)
+            {
+                // Also a sibling with the same uncaught-propagation risk. Re-verification reuses
+                // the same shared mutation scope as the first pass, so if the first pass already
+                // succeeded under the ceiling, this should be rare; still handled for the same
+                // reason every other candidate-scoped failure here is.
+                rejected.Add(new RejectedCandidate(candidate, RejectionReason.MutantCeilingExceeded, ex.Message));
+                continue;
+            }
 
             var stillKilled = falsification.KilledMutants.FirstOrDefault(reverified.KilledMutants.Contains);
 

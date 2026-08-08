@@ -188,6 +188,80 @@ public class AttestRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_FalsifierExceedsMutantCeilingForOneCandidate_RejectsOnlyThatCandidateAndStillDeliversTheOther()
+    {
+        // AttestMutantCeilingExceededException is a sibling of AttestFalsificationFailedException
+        // (both derive directly from AttestException), not a subtype of it; the catch this test
+        // guards against only handled the latter, so the former propagated uncaught out of the
+        // whole RunAsync loop and discarded every other candidate's already-completed work,
+        // delivered or not, along with it.
+        var projectDir = Path.Combine(_repositoryRoot, "Fixture4");
+        Directory.CreateDirectory(projectDir);
+
+        var csprojPath = Path.Combine(projectDir, "Fixture4.csproj");
+        await File.WriteAllTextAsync(csprojPath, """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+            </Project>
+            """);
+
+        var calculatorPath = Path.Combine(projectDir, "Calculator.cs");
+        await File.WriteAllTextAsync(calculatorPath, """
+            namespace Fixture4;
+
+            public class Calculator
+            {
+                public int Add(int a, int b) => a + b;
+            }
+            """);
+
+        await RunGitAsync("init", "-b", "main");
+        await RunGitAsync("add", ".");
+        var baseCommit = await CommitAsync("initial");
+
+        var marker = Guid.NewGuid().ToString("N");
+        await File.WriteAllTextAsync(calculatorPath, $$"""
+            namespace Fixture4;
+
+            public class Calculator
+            {
+                // test-marker: {{marker}}
+                public int Add(int a, int b) => a + b + 0;
+            }
+            """);
+
+        const string goodCandidateJson = """
+            {"name": "AddIsCommutative", "description": "Addition does not depend on argument order.", "sourceCode": "[Property]\npublic bool AddIsCommutative(int a, int b)\n{\n    var calculator = new Fixture4.Calculator();\n    return calculator.Add(a, b) == calculator.Add(b, a);\n}"}
+            """;
+        const string flakyCandidateJson = """
+            {"name": "FalsifierWillExceedCeiling", "description": "Fine C#, but the Falsifier is rigged to exceed the ceiling for this one.", "sourceCode": "[Property]\npublic bool FalsifierWillExceedCeiling(int a, int b)\n{\n    var calculator = new Fixture4.Calculator();\n    return calculator.Add(a, b) >= 0 || true;\n}"}
+            """;
+
+        var provider = new FakeLlmProvider(new LlmResponse($"[{goodCandidateJson}, {flakyCandidateJson}]", 100, 50, 0.001m));
+        var realFalsifier = new Falsifier();
+
+        var runner = new AttestRunner(
+            new DiffScope(),
+            new Sanitizer(),
+            new Proposer(provider),
+            new Synthesizer(),
+            new Validator(),
+            new FlakyFalsifier(realFalsifier, "FalsifierWillExceedCeiling"),
+            new EvidenceReporter(realFalsifier));
+
+        var result = await runner.RunAsync(_repositoryRoot, csprojPath, baseCommit, 200, CancellationToken.None);
+
+        Assert.Equal(2, result.Report.ProposedCount);
+        Assert.Contains(result.Report.Delivered, d => d.Candidate.Name == "AddIsCommutative");
+        Assert.Contains(
+            result.Report.Rejected,
+            r => r.Candidate.Name == "FalsifierWillExceedCeiling" && r.Reason == RejectionReason.MutantCeilingExceeded);
+    }
+
+    [Fact]
     public async Task RunAsync_ProposerReturnsTheSameCandidateTwice_TreatsItAsOneNotTwo()
     {
         // Two structurally-identical PropertyCandidate objects in one response are an expected

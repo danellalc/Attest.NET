@@ -19,8 +19,18 @@ public sealed class Validator : IValidator
         var scratchDirectory = Path.GetDirectoryName(test.ScratchProjectPath)!;
         const string trxFileName = "validate.trx";
 
+        IAsyncDisposable directoryLockHandle;
+        try
+        {
+            directoryLockHandle = await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new AttestValidationFailedException(test.Candidate.Name, $"Could not acquire the scratch directory lock: {ex.Message}");
+        }
+
         Dictionary<string, (string Outcome, string? Output)> results;
-        await using (await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false))
+        await using (directoryLockHandle)
         {
             var runResult = await ProcessRunner.RunAsync(
                 "dotnet",

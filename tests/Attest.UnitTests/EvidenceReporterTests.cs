@@ -32,22 +32,30 @@ public class EvidenceReporterTests
     // by echoing back the exact kill it was originally given, as a real reproduction would. A
     // single-candidate test cannot prove candidates are isolated from each other's failures: it
     // cannot tell "this candidate was rejected, and everyone else was unaffected" apart from
-    // "this candidate was rejected in isolation with nothing else to affect".
+    // "this candidate was rejected in isolation with nothing else to affect". The exception to
+    // throw is a factory, not fixed, so the same fake covers every sibling AttestException the
+    // re-verification call can actually raise (AttestFalsificationFailedException,
+    // AttestMutantCeilingExceededException, AttestMutantCountMismatchException).
     private sealed class SelectivelyThrowingFalsifier : IFalsifier
     {
         private readonly string _throwForCandidateName;
+        private readonly Func<string, AttestException> _exceptionFactory;
         private readonly IReadOnlyDictionary<string, MutantKill> _reproducedKillByCandidateName;
 
-        public SelectivelyThrowingFalsifier(string throwForCandidateName, IReadOnlyDictionary<string, MutantKill> reproducedKillByCandidateName)
+        public SelectivelyThrowingFalsifier(
+            string throwForCandidateName,
+            IReadOnlyDictionary<string, MutantKill> reproducedKillByCandidateName,
+            Func<string, AttestException>? exceptionFactory = null)
         {
             _throwForCandidateName = throwForCandidateName;
             _reproducedKillByCandidateName = reproducedKillByCandidateName;
+            _exceptionFactory = exceptionFactory ?? (name => new AttestFalsificationFailedException(name, "stryker crashed mid-run"));
         }
 
         public Task<FalsificationResult> FalsifyAsync(SynthesizedTest test, MutationScope scope, CancellationToken cancellationToken)
         {
             if (test.Candidate.Name == _throwForCandidateName)
-                throw new AttestFalsificationFailedException(test.Candidate.Name, "stryker crashed mid-run");
+                throw _exceptionFactory(test.Candidate.Name);
 
             return Task.FromResult(new FalsificationResult(test, [_reproducedKillByCandidateName[test.Candidate.Name]]));
         }
@@ -86,5 +94,63 @@ public class EvidenceReporterTests
 
         var delivered = Assert.Single(report.Delivered);
         Assert.Equal("Healthy", delivered.Candidate.Name);
+    }
+
+    [Theory]
+    [MemberData(nameof(SiblingFalsificationExceptions))]
+    public async Task BuildReportAsync_ReVerificationRaisesASiblingException_RejectsOnlyThatCandidateAndStillDeliversTheOther(
+        RejectionReason expectedReason,
+        Func<string, AttestException> exceptionFactory)
+    {
+        // AttestMutantCeilingExceededException and AttestMutantCountMismatchException are
+        // siblings of AttestFalsificationFailedException (all three derive directly from
+        // AttestException, none from one another); a catch narrowed to only the latter let
+        // either of the other two propagate uncaught out of BuildReportAsync, discarding every
+        // other candidate's report entry, delivered or not, along with it.
+        var flakyCandidate = new PropertyCandidate("Flaky", "Kill exists, but re-verification itself raises a sibling exception.", "body");
+        var flakyTest = new SynthesizedTest(flakyCandidate, "dummy.csproj", "Flaky.First", "Flaky.Second");
+        var flakyValidation = new ValidationResult(flakyTest, ValidationOutcome.Valid, null);
+        var flakyKill = new MutantKill("Arithmetic", "Flaky.cs", 10, 5, "a - b");
+        var flakyFalsification = new FalsificationResult(flakyTest, [flakyKill]);
+
+        var healthyCandidate = new PropertyCandidate("Healthy", "Kill exists and reproduces cleanly.", "body");
+        var healthyTest = new SynthesizedTest(healthyCandidate, "dummy.csproj", "Healthy.First", "Healthy.Second");
+        var healthyValidation = new ValidationResult(healthyTest, ValidationOutcome.Valid, null);
+        var healthyKill = new MutantKill("Arithmetic", "Healthy.cs", 20, 5, "a - b");
+        var healthyFalsification = new FalsificationResult(healthyTest, [healthyKill]);
+
+        var reporter = new EvidenceReporter(new SelectivelyThrowingFalsifier(
+            "Flaky",
+            new Dictionary<string, MutantKill> { ["Healthy"] = healthyKill },
+            exceptionFactory));
+        var scope = new MutationScope([], MaxMutants: 200);
+
+        var report = await reporter.BuildReportAsync(
+            proposed: [flakyCandidate, healthyCandidate],
+            validations: [flakyValidation, healthyValidation],
+            falsifications: [flakyFalsification, healthyFalsification],
+            scope,
+            CancellationToken.None);
+
+        var rejection = Assert.Single(report.Rejected);
+        Assert.Equal("Flaky", rejection.Candidate.Name);
+        Assert.Equal(expectedReason, rejection.Reason);
+
+        var delivered = Assert.Single(report.Delivered);
+        Assert.Equal("Healthy", delivered.Candidate.Name);
+    }
+
+    public static IEnumerable<object[]> SiblingFalsificationExceptions()
+    {
+        yield return
+        [
+            RejectionReason.FalsificationFailed,
+            (Func<string, AttestException>)(name => new AttestMutantCountMismatchException(expectedCount: 3, actualCount: 7)),
+        ];
+        yield return
+        [
+            RejectionReason.MutantCeilingExceeded,
+            (Func<string, AttestException>)(name => new AttestMutantCeilingExceededException(maxMutants: 200, actualCount: 250)),
+        ];
     }
 }

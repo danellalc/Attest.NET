@@ -292,32 +292,117 @@ public class SanitizerTests
     }
 
     [Fact]
-    public void Sanitize_OrdinaryPasswordPropertyAssignment_DoesNotRedactTheMethodCallChain()
+    public void Sanitize_OrdinaryPasswordPropertyAssignment_RaisesNoFindingAtAll()
     {
         // Caught testing against real code (CliWrap's Command.Execution.cs): an ordinary C#
         // property assignment whose left side happens to be named "Password" is not a
-        // connection string. The old unquoted-value charset had no way to tell "=" (connection
-        // string syntax) apart from " = <C# expression>" (assignment syntax) and swallowed the
-        // whole right-hand-side expression, including unrelated method calls, up to the ';'.
+        // connection string. A first fix attempt (excluding '.', '(', ')' from the unquoted
+        // charset) only shrank the false positive to "Password = Credentials" instead of
+        // eliminating it, and an equally real sibling case ("if (x.Password == null)") still
+        // matched too, since '=' itself was never excluded. The actual signal is whitespace
+        // around '=': a connection string never has space before it, C# code always does.
         const string content = "processStartInfo.Password = Credentials.Password.ToSecureString();";
 
         var result = _sanitizer.Sanitize(content);
 
-        Assert.Contains("ToSecureString()", result.RedactedContent);
+        Assert.Equal(content, result.RedactedContent);
+        Assert.Empty(result.Findings);
     }
 
     [Fact]
-    public void Sanitize_UnquotedConnectionStringPasswordWithNoSpacesAroundEquals_StillRedacted()
+    public void Sanitize_PasswordEqualityComparison_RaisesNoFindingAtAll()
     {
-        // The fix for the false positive above must not break the actual real-world shape this
-        // pattern exists for: a connection string embedded directly in source, tight key=value
-        // syntax with no surrounding quotes around the password value specifically.
-        const string secret = "Sup3rSecretValue123";
-        var content = $"Server=tcp:my.server.com;Password={secret};Database=prod;";
+        // "==" is the same failure family as the property-assignment case above: the pattern's
+        // "=" literal partially matches the first '=' of '==', and an unguarded unquoted
+        // charset would consume into the second '=' and beyond, corrupting valid C# into a
+        // syntax error.
+        const string content = "if (user.Password == null) return false;";
 
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.Equal(content, result.RedactedContent);
+        Assert.Empty(result.Findings);
+    }
+
+    [Theory]
+    [InlineData("Server=tcp:my.server.com;Password=Sup3rSecretValue123;Database=prod;", "Sup3rSecretValue123")]
+    [InlineData("Server=tcp:my.server.com;Password=Sup3r.Secret(2024);Database=prod;", "Sup3r.Secret(2024)")]
+    public void Sanitize_UnquotedConnectionStringPassword_FullyRedactedEvenWithDotsOrParens(string content, string secret)
+    {
+        // The fix for the two false positives above must not break the actual real-world shape
+        // this pattern exists for: a connection string embedded directly in source, tight
+        // key=value syntax with no surrounding quotes. A prior fix attempt excluded '.', '(',
+        // ')' from the unquoted charset specifically to fix the property-assignment false
+        // positive, but a real, unquoted ADO.NET password value is legally allowed to contain
+        // those characters too, so that exclusion truncated the secret instead of eliminating
+        // the false positive, leaking the tail right next to the REDACTED tag.
         var result = _sanitizer.Sanitize(content);
 
         Assert.DoesNotContain(secret, result.RedactedContent);
         Assert.Contains(result.Findings, f => f.Category == "ConnectionStringPassword");
+    }
+
+    [Theory]
+    [InlineData("var secret = \"Purple7Horse19K\";", "Purple7Horse19K")]
+    [InlineData("var apiKey = \"a8Kj3mZ9qT1pXw2Q\";", "a8Kj3mZ9qT1pXw2Q")]
+    public void Sanitize_ShortRealisticSecretNearContextKeyword_IsRedacted(string content, string secret)
+    {
+        // The unconditional 20-char floor gated the entropy check before context was even
+        // considered, so a realistic 15-16 character secret sitting right next to its own
+        // context keyword was never even evaluated, let alone redacted.
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.DoesNotContain(secret, result.RedactedContent);
+        Assert.Contains(result.Findings, f => f.Category == "HighEntropyToken");
+    }
+
+    [Fact]
+    public void Sanitize_ShortTokenWithNoContext_StaysAboveTheUnconditionalFloor()
+    {
+        // Lowering the context-gated floor to 12 must not lower it unconditionally: an ordinary
+        // short identifier with no nearby secret keyword should still need 20+ characters
+        // before entropy is even checked.
+        const string content = "var correlationId = \"a8Kj3mZ9qT1pXw2Q\";";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.Equal(content, result.RedactedContent);
+        Assert.Empty(result.Findings);
+    }
+
+    [Fact]
+    public void Sanitize_SecretWrappedAcrossTwoLines_IsRedacted()
+    {
+        // HasSecretContext used to check only the candidate's own physical line; a wrapped
+        // assignment (routine when a line-length formatter or an object initializer splits the
+        // keyword and its value across lines) silently lost the lowered threshold entirely.
+        const string secret = "correcthorsebatterystaple12345678";
+        var content = $"var clientSecret =\n    \"{secret}\";";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.DoesNotContain(secret, result.RedactedContent);
+        Assert.Contains(result.Findings, f => f.Category == "HighEntropyToken");
+    }
+
+    [Fact]
+    public void Sanitize_KeywordFourLinesAbove_DoesNotLowerTheThreshold()
+    {
+        // The multi-line lookback is bounded (2 lines), not unlimited: a keyword mentioned far
+        // above an unrelated value must not tag it, matching the original design's intent. A
+        // comment (not an assignment) on purpose, so this isolates the lookback distance itself
+        // rather than also exercising ConnectionStringPasswordPattern's own "password" match.
+        const string content = """
+            // password reset flow starts below
+            // line 2
+            // line 3
+            // line 4
+            var buildId = "correcthorsebatterystaple12345678";
+            """;
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.Equal(content, result.RedactedContent);
+        Assert.Empty(result.Findings);
     }
 }

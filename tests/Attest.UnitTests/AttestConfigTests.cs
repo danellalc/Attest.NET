@@ -65,4 +65,22 @@ public class AttestConfigTests
         Assert.Equal(AttestConfig.DefaultMaxMutants, config.MaxMutants);
         Assert.Equal(200, config.MaxMutants);
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void Load_NonPositiveMaxMutants_FallsBackToDefaultInsteadOfAcceptingIt(int handEditedValue)
+    {
+        // InitCommand's own interactive prompt already falls back to the default for the same
+        // input (parsed > 0 ? parsed : DefaultMaxMutants); Load trusted a hand-edited
+        // attest.json's value verbatim, so "maxMutants": 0 silently became an unusable ceiling
+        // that would trip on the very first tested mutant with no hint the config was the cause.
+        File.WriteAllText(Path.Combine(_directory, "attest.json"), $$"""
+            {"provider": "ollama", "model": "llama3", "maxMutants": {{handEditedValue}}}
+            """);
+
+        var config = AttestConfig.Load(_directory);
+
+        Assert.Equal(AttestConfig.DefaultMaxMutants, config.MaxMutants);
+    }
 }

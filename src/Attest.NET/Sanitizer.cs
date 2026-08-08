@@ -12,6 +12,12 @@ public sealed partial class Sanitizer : ISanitizer
 {
     private const int MinTokenLength = 20;
 
+    // Realistic short secrets (15-16 char API keys, for instance) never even become a candidate
+    // to entropy-check under the unconditional 20-char floor. Only lowered when a nearby
+    // keyword already flags the line as secret-suggestive; unconditionally, 20 stays the floor
+    // so ordinary short identifiers don't start getting entropy-checked in bulk.
+    private const int MinTokenLengthWithContext = 12;
+
     // Hex digests (git SHAs, MD5/SHA hashes) top out at exactly 4.0 bits/char (log2(16)); this
     // sits above that so hashes routinely shown in diffs and logs don't get flagged. Applies
     // only when nothing nearby suggests the value is actually meant to be secret; see
@@ -114,9 +120,6 @@ public sealed partial class Sanitizer : ISanitizer
     {
         foreach (Match candidate in TokenCandidatePattern().Matches(content))
         {
-            if (candidate.Length < MinTokenLength)
-                continue;
-
             var candidateEnd = candidate.Index + candidate.Length;
 
             // Skip only when an existing match already covers this candidate completely; a
@@ -126,24 +129,48 @@ public sealed partial class Sanitizer : ISanitizer
             if (alreadyMatched.Any(m => candidate.Index >= m.Start && candidateEnd <= m.Start + m.Length))
                 continue;
 
-            var threshold = HasSecretContext(content, candidate.Index) ? EntropyThresholdWithContext : EntropyThreshold;
+            var hasContext = HasSecretContext(content, candidate.Index);
+
+            var minLength = hasContext ? MinTokenLengthWithContext : MinTokenLength;
+            if (candidate.Length < minLength)
+                continue;
+
+            var threshold = hasContext ? EntropyThresholdWithContext : EntropyThreshold;
             if (ComputeShannonEntropy(candidate.Value) >= threshold)
                 yield return (candidate.Index, candidate.Length);
         }
     }
 
+    // How many full lines above the candidate's own line still count as context. A wrapped
+    // assignment or object-initializer property routinely puts the keyword and the value on
+    // different lines (`var clientSecret =\n    "value";`); a strictly same-line check missed
+    // that entirely. Still bounded, not "anywhere above": a keyword mentioned many lines away
+    // (a comment at the top of a long method, say) should not tag an unrelated value below it.
+    private const int SecretContextLookbackLines = 2;
+
     /// <summary>
-    /// True when a name like "secret" or "apiKey" appears on the same line, before the
-    /// candidate token. Deliberately line-scoped rather than a fixed character window: a
-    /// secret-looking value on an unrelated line should not inherit context from a "password"
-    /// mentioned somewhere far above it.
+    /// True when a name like "secret" or "apiKey" appears on the candidate's own line, or up to
+    /// <see cref="SecretContextLookbackLines"/> lines above it, before the candidate token.
     /// </summary>
     private static bool HasSecretContext(string content, int candidateStart)
     {
-        var lineStart = content.LastIndexOf('\n', Math.Max(0, candidateStart - 1)) + 1;
-        var prefix = content[lineStart..candidateStart];
+        var searchPosition = candidateStart;
+        var windowStart = 0;
 
-        return SecretContextKeywordPattern().IsMatch(prefix);
+        for (var line = 0; line <= SecretContextLookbackLines; line++)
+        {
+            var newlineIndex = content.LastIndexOf('\n', Math.Max(0, searchPosition - 1));
+            windowStart = newlineIndex + 1;
+            if (newlineIndex < 0)
+                break;
+
+            // Search strictly before this newline next time; searching AT it again (windowStart
+            // - 1) would just re-find the same one, since LastIndexOf's start index is inclusive.
+            searchPosition = newlineIndex;
+        }
+
+        var window = content[windowStart..candidateStart];
+        return SecretContextKeywordPattern().IsMatch(window);
     }
 
     private static bool Overlaps(int start1, int length1, int start2, int length2) =>
@@ -206,16 +233,24 @@ public sealed partial class Sanitizer : ISanitizer
     // (standard ADO.NET connection-string quoting): 'it''s' means the literal value it's. The
     // naive '[^']*' alternative stops at that first doubled quote, leaking everything after it.
     //
-    // The unquoted alternative's charset excludes '.', '(' and ')' on purpose: without that,
-    // this matched ordinary C# property assignment too, not just connection-string syntax.
-    // Caught testing against real code (CliWrap's `processStartInfo.Password =
-    // Credentials.Password.ToSecureString();`): the old charset let the "value" run all the way
-    // to the trailing ';', redacting a whole method-call chain as if it were a secret. A real
-    // connection-string password value is never itself a C# member-access or call expression.
-    [GeneratedRegex(@"\b(?:password|pwd)\s*=\s*(?:'(?:[^']|'')*'|""(?:[^""]|"""")*""|[^;'"".()\s]+)", RegexOptions.IgnoreCase)]
+    // Two alternatives, split on whether whitespace surrounds the '=', because that turned out
+    // to be the real signal separating connection-string syntax from C# code, not any specific
+    // excluded character (tried that first, excluding '.'/'('/')': it broke on a password value
+    // that legitimately contained a dot, and still didn't stop `Password == null` from matching,
+    // since '=' itself was never excluded). A connection string never has a space before '=';
+    // ordinary C# style always does. So: 'password=value' (zero space before '=') accepts a
+    // broad unquoted charset, since that shape cannot be a C# assignment or comparison at all;
+    // 'password = value' (space allowed either side) requires the value to be quoted, since an
+    // unquoted, spaced right-hand side is a C# expression (an assignment, or the first '=' of a
+    // '==' comparison), never a literal secret value.
+    [GeneratedRegex(
+        @"\b(?:password|pwd)\s*=\s*(?:'(?:[^']|'')*'|""(?:[^""]|"""")*"")|\b(?:password|pwd)=[^;'""\s]+",
+        RegexOptions.IgnoreCase)]
     private static partial Regex ConnectionStringPasswordPattern();
 
-    [GeneratedRegex(@"[A-Za-z0-9+/_=-]{20,}")]
+    // Floor matches MinTokenLengthWithContext, the shorter of the two length gates; the
+    // unconditional, no-context MinTokenLength is enforced separately in FindHighEntropyTokens.
+    [GeneratedRegex(@"[A-Za-z0-9+/_=-]{12,}")]
     private static partial Regex TokenCandidatePattern();
 
     // Deliberately more specific than bare "key" or "token": both are extremely common in

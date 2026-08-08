@@ -102,4 +102,50 @@ public class SynthesizerTests
         // first. When none is available, the first listed framework is kept as a last resort.
         Assert.Equal(expected, Synthesizer.SelectBestTargetFramework(targetFrameworks));
     }
+
+    [Theory]
+    [InlineData("netstandard2.0;net8.0-windows", "net8.0-windows")]
+    [InlineData("net7.0;net8.0-windows10.0.19041.0", "net8.0-windows10.0.19041.0")]
+    [InlineData("net8.0;net8.0-windows", "net8.0")]
+    public void SelectBestTargetFramework_AcceptsPlatformSuffixedModernFrameworks(string targetFrameworks, string expected)
+    {
+        // The original regex was fully anchored ("^net(\d+)\.(\d+)$"), so a platform-suffixed
+        // modern TFM like "net8.0-windows" was rejected exactly like a classic .NET Framework
+        // moniker, falling through to netstandard2.0 -- the same non-runnable moniker this fix
+        // exists to avoid in the first place. At an equal version, the plain moniker (no
+        // platform requirement) is still preferred over the suffixed one.
+        Assert.Equal(expected, Synthesizer.SelectBestTargetFramework(targetFrameworks));
+    }
+
+    [Fact]
+    public async Task SynthesizeAsync_TargetProjectSourceFileLockedDuringFingerprinting_ThrowsNamedExceptionNotRaw()
+    {
+        // ComputeTargetFingerprint walks every .cs file under the target project (and every
+        // project it transitively references) via File.ReadAllText with no try/catch around it;
+        // a file locked by another process at the exact moment this scan runs (an IDE build, an
+        // antivirus scan) used to let a raw IOException escape SynthesizeAsync unwrapped.
+        var root = Path.Combine(Path.GetTempPath(), $"attest-locked-fingerprint-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var csprojPath = Path.Combine(root, "Target.csproj");
+            File.WriteAllText(csprojPath, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            var sourcePath = Path.Combine(root, "Locked.cs");
+            File.WriteAllText(sourcePath, "public class Locked { }");
+
+            var candidate = new PropertyCandidate("LockedFingerprintTest", "d", "[Property] public bool LockedFingerprintTest() => true;");
+            var synthesizer = new Synthesizer();
+
+            using var lockHandle = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+            var exception = await Assert.ThrowsAsync<AttestSynthesisFailedException>(
+                () => synthesizer.SynthesizeAsync(candidate, csprojPath, CancellationToken.None));
+
+            Assert.Equal("LockedFingerprintTest", exception.CandidateName);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }

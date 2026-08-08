@@ -34,7 +34,16 @@ public sealed class DiffScope : IDiffScope
         if (changedLineRanges.Count == 0)
             return new DiffScopeResult([], []);
 
-        var projectPaths = DiscoverProjectPaths(realRoot);
+        List<string> projectPaths;
+        try
+        {
+            projectPaths = DiscoverProjectPaths(realRoot);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new AttestDiffScopeFailedException(realRoot, $"Could not enumerate project files: {ex.Message}");
+        }
+
         if (projectPaths.Count == 0)
             throw new AttestDiffScopeFailedException(realRoot, "No .csproj files found under the repository root.");
 

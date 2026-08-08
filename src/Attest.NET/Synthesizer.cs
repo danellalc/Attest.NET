@@ -36,7 +36,21 @@ public sealed partial class Synthesizer : ISynthesizer
 
         var targetFramework = DetectTargetFramework(candidate.Name, targetProjectPath);
         var testClassName = $"Scratch_{candidate.Name}";
-        var scratchDirectory = ComputeScratchDirectory(candidate, testClassName, targetProjectPath);
+
+        string scratchDirectory;
+        try
+        {
+            // Walks every .cs file under the target project and every project it references
+            // transitively (ComputeTargetFingerprint), so a file deleted, locked (an IDE build,
+            // an antivirus scan), or briefly access-denied between the directory listing and the
+            // read is a real, not theoretical, risk on every call.
+            scratchDirectory = ComputeScratchDirectory(candidate, testClassName, targetProjectPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new AttestSynthesisFailedException(candidate.Name, $"Could not fingerprint the target project: {ex.Message}");
+        }
+
         var csprojPath = Path.Combine(scratchDirectory, $"{testClassName}.csproj");
         var builtAssemblyPath = Path.Combine(scratchDirectory, "bin", "Release", targetFramework, $"{testClassName}.dll");
 
@@ -46,7 +60,17 @@ public sealed partial class Synthesizer : ISynthesizer
             FirstSeedTestName: $"{testClassName}.{FirstSeedClassName(candidate)}.{candidate.Name}",
             SecondSeedTestName: $"{testClassName}.{SecondSeedClassName(candidate)}.{candidate.Name}");
 
-        await using var directoryLock = await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false);
+        IAsyncDisposable directoryLockHandle;
+        try
+        {
+            directoryLockHandle = await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new AttestSynthesisFailedException(candidate.Name, $"Could not acquire the scratch directory lock: {ex.Message}");
+        }
+
+        await using var directoryLock = directoryLockHandle;
 
         if (File.Exists(builtAssemblyPath))
             return synthesizedTest;
@@ -223,6 +247,10 @@ public sealed partial class Synthesizer : ISynthesizer
             .Where(candidate => candidate.Match.Success)
             .OrderByDescending(candidate => int.Parse(candidate.Match.Groups[1].Value))
             .ThenByDescending(candidate => int.Parse(candidate.Match.Groups[2].Value))
+            // At the same version, prefer the plain moniker over a platform-suffixed one
+            // (net8.0 over net8.0-windows): the suffixed form needs that platform's workload
+            // available to build, which the plain one never requires.
+            .ThenBy(candidate => candidate.Framework.Contains('-') ? 1 : 0)
             .Select(candidate => candidate.Framework)
             .FirstOrDefault();
 
@@ -232,8 +260,12 @@ public sealed partial class Synthesizer : ISynthesizer
     // Modern .NET TFMs (net5.0 and up) always have a dot between major and minor version;
     // classic .NET Framework monikers (net48, net472, ...) never do, so this excludes them
     // without needing an explicit denylist, and equally excludes netstandardX.Y/netcoreappX.Y
-    // by requiring the "net" prefix to be followed directly by digits.
-    [GeneratedRegex(@"^net(\d+)\.(\d+)$")]
+    // by requiring the "net" prefix to be followed directly by digits. The optional trailing
+    // "-platform" group (net8.0-windows, net8.0-windows10.0.19041.0, net9.0-android, ...) is
+    // still a real, runnable modern TFM: without allowing it here, a project multi-targeting
+    // only platform-specific modern frameworks (no bare net8.0 at all) fell through to the same
+    // netstandardX.Y fallback this method exists to avoid.
+    [GeneratedRegex(@"^net(\d+)\.(\d+)(?:-[a-zA-Z0-9.]+)?$")]
     private static partial Regex ModernDotNetFrameworkPattern();
 
     private const string IsolatingBuildProps = """

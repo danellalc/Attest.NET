@@ -122,6 +122,23 @@ internal sealed class AttestRunner
                 // trivial rejection, same as a genuine zero-kill result. See the flaky-candidate
                 // risk in PLANO.md for why this can happen to an otherwise fine candidate.
             }
+            catch (AttestMutantCountMismatchException ex)
+            {
+                // A sibling AttestException, not a subtype of AttestFalsificationFailedException
+                // above; used to propagate uncaught out of the whole loop, discarding every
+                // other candidate's already-completed work (including successfully delivered
+                // ones) along with it. This candidate is the only one that actually failed.
+                preFilteredRejections.Add(new RejectedCandidate(candidate, RejectionReason.FalsificationFailed, ex.Message));
+            }
+            catch (AttestMutantCeilingExceededException ex)
+            {
+                // Also a sibling of AttestFalsificationFailedException, with the same
+                // whole-run-discarding effect if left uncaught. The ceiling applies to the
+                // shared mutation scope, so every remaining candidate that reaches falsification
+                // will likely hit it too; each is rejected in turn rather than one exception
+                // aborting the run and losing every candidate's work, delivered or not.
+                preFilteredRejections.Add(new RejectedCandidate(candidate, RejectionReason.MutantCeilingExceeded, ex.Message));
+            }
         }
 
         var coreReport = await _evidenceReporter

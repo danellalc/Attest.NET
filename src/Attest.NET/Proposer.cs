@@ -36,8 +36,15 @@ public sealed class Proposer : IProposer
         var userPrompt = BuildUserPrompt(scopedMethods);
         var response = await _provider.CompleteAsync(SystemPrompt, userPrompt, cancellationToken).ConfigureAwait(false);
 
-        var candidates = ParseCandidates(response.Content);
-        ProposalCache.Write(cacheKey, response.Content);
+        // Only the inbound direction (source code into the prompt) was ever sanitized; the
+        // model's own response was cached and turned into a real .cs file completely
+        // unsanitized. If the model ever echoes back something the inbound pass missed, or
+        // hallucinates something secret-shaped, this is the one place that can still catch it
+        // before it reaches disk (the proposal cache) or a compilable scratch file (Synthesizer).
+        var sanitizedContent = new Sanitizer().Sanitize(response.Content).RedactedContent;
+
+        var candidates = ParseCandidates(sanitizedContent);
+        ProposalCache.Write(cacheKey, sanitizedContent);
 
         var usage = new LlmUsage(response.InputTokens, response.OutputTokens, response.EstimatedCostUsd);
         return new ProposalResult(candidates, usage, FromCache: false);
@@ -99,11 +106,18 @@ public sealed class Proposer : IProposer
     // a last-resort fallback, so a stray empty pair before the real array never wins over it.
     private static string ExtractJsonArray(string rawResponse)
     {
+        // A model with genuinely nothing to propose is instructed to respond with exactly this;
+        // checked first and requiring the ENTIRE response (after trimming) to be it, so a stray
+        // "[]"-shaped mention elsewhere in a prose response ("int[]", a type name) is never
+        // mistaken for a real empty proposal. Silently returning "nothing to propose" for a
+        // response that is actually malformed/refused-in-prose would hide that failure instead
+        // of surfacing it as the AttestProposalFailedException below.
+        if (rawResponse.Trim() == "[]")
+            return "[]";
+
         var start = rawResponse.IndexOf('[');
         if (start < 0)
             throw new AttestProposalFailedException("no JSON array found in the response.", rawResponse);
-
-        string? fallback = null;
 
         while (start >= 0)
         {
@@ -112,31 +126,33 @@ public sealed class Proposer : IProposer
                 var match = TryMatchBalancedArray(rawResponse, start);
                 if (match is { ContainsObject: true } found)
                     return found.Text;
-
-                fallback ??= match?.Text;
             }
 
             start = rawResponse.IndexOf('[', start + 1);
         }
 
-        return fallback ?? throw new AttestProposalFailedException("no balanced JSON array found in the response.", rawResponse);
+        throw new AttestProposalFailedException("no balanced JSON array found in the response.", rawResponse);
     }
 
-    // Every real response is an array of objects (or, at worst, an empty array); prose that
-    // merely mentions a bracket ("int[]", or interval notation like "[0, 100)") never has an
-    // object, a nested array, or an immediate close right after it. Checking this BEFORE
-    // attempting to balance-scan matters beyond just skipping obviously-wrong starts: bracket
-    // depth alone cannot tell a stray '[' in leading prose from the real array's '[' when an
-    // unrelated ']' shows up later in trailing prose (e.g. "[0, 100) ... [{...}] ... (0, 100]"
-    // nets to a validly-nested "[ [ {} ] ]" once parentheses, which are not tracked at all, are
-    // ignored), so this prunes exactly the starting positions where that false balance can occur.
+    // Every real response is an array of objects; prose that merely mentions a bracket
+    // ("int[]", or interval notation like "[0, 100)") never has an object right after it, and
+    // an immediate close ("int[]") is deliberately NOT accepted as plausible either: unlike the
+    // genuinely-empty-response case above (matched only when it is the WHOLE trimmed response),
+    // a bare "[]" embedded inside other text is far more likely to be a stray type-array mention
+    // than a real proposal, and treating it as one masked a malformed/refused response as "the
+    // model legitimately proposed nothing" with no error at all. Checking plausibility BEFORE
+    // attempting to balance-scan matters beyond skipping obviously-wrong starts: bracket depth
+    // alone cannot tell a stray '[' in leading prose from the real array's '[' when an unrelated
+    // ']' shows up later in trailing prose (e.g. "[0, 100) ... [{...}] ... (0, 100]" nets to a
+    // validly-nested "[ [ {} ] ]" once parentheses, which are not tracked at all, are ignored),
+    // so this prunes exactly the starting positions where that false balance can occur.
     private static bool IsPlausibleArrayStart(string rawResponse, int bracketIndex)
     {
         var i = bracketIndex + 1;
         while (i < rawResponse.Length && char.IsWhiteSpace(rawResponse[i]))
             i++;
 
-        return i < rawResponse.Length && rawResponse[i] is '{' or '[' or ']';
+        return i < rawResponse.Length && rawResponse[i] is '{' or '[';
     }
 
     private static (string Text, bool ContainsObject)? TryMatchBalancedArray(string rawResponse, int start)

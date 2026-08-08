@@ -32,8 +32,18 @@ public sealed class Falsifier : IFalsifier
         arguments.Add("Json");
         arguments.Add("--break-on-initial-test-failure");
 
+        IAsyncDisposable directoryLockHandle;
+        try
+        {
+            directoryLockHandle = await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new AttestFalsificationFailedException(test.Candidate.Name, $"Could not acquire the scratch directory lock: {ex.Message}");
+        }
+
         StrykerReport report;
-        await using (await ScratchDirectoryLocks.AcquireAsync(scratchDirectory, cancellationToken).ConfigureAwait(false))
+        await using (directoryLockHandle)
         {
             // Snapshotted before dotnet-stryker runs: only a report in a run directory that did
             // not exist yet is actually proof of THIS invocation. A live re-verification call
