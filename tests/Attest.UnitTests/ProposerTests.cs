@@ -188,7 +188,11 @@ public class ProposerTests
     [Fact]
     public async Task ProposeAsync_FirstCall_InvokesProviderAndReturnsUsage()
     {
-        var marker = Guid.NewGuid().ToString("N");
+        // Truncated to 8 hex chars: a full GUID's digits are exactly the kind of high-entropy
+        // run the Sanitizer's own entropy detector exists to catch, and ProposeAsync sanitizes
+        // the response before returning it -- using the full 32 chars here made this test flaky,
+        // failing only when a given random GUID's digit distribution crossed the threshold.
+        var marker = Guid.NewGuid().ToString("N")[..8];
         var scoped = new[] { new ScopedSource("Fixture.Type", $"Method_{marker}", $"public bool Method_{marker}() => true;") };
         var response = new LlmResponse(
             $$"""[{"name": "Prop_{{marker}}", "description": "d", "sourceCode": "[Property] public bool Prop_{{marker}}() => true;"}]""",
@@ -211,7 +215,7 @@ public class ProposerTests
     [Fact]
     public async Task ProposeAsync_SecondCallWithIdenticalInput_ReadsFromCacheWithoutCallingProvider()
     {
-        var marker = Guid.NewGuid().ToString("N");
+        var marker = Guid.NewGuid().ToString("N")[..8];
         var scoped = new[] { new ScopedSource("Fixture.Type", $"Method_{marker}", $"public bool Method_{marker}() => true;") };
         var response = new LlmResponse(
             $$"""[{"name": "Prop_{{marker}}", "description": "d", "sourceCode": "[Property] public bool Prop_{{marker}}() => true;"}]""",
@@ -239,7 +243,7 @@ public class ProposerTests
         // unsanitized. If the model ever echoes back (or hallucinates) something secret-shaped,
         // this was the one place nothing caught it before it reached a persistent cache file or
         // a real, never-deleted scratch .cs file.
-        var marker = Guid.NewGuid().ToString("N");
+        var marker = Guid.NewGuid().ToString("N")[..8];
         var scoped = new[] { new ScopedSource("Fixture.Type", $"Method_{marker}", $"public bool Method_{marker}() => true;") };
         const string secret = "AKIAIOSFODNN7EXAMPLE";
         var response = new LlmResponse(
@@ -269,7 +273,13 @@ public class ProposerTests
         // proposal back, with the report showing "cached proposal, no call made" -- the new
         // provider was never actually called. Proposer.ProposeAsync is the integration point
         // that must see a cache miss here, not just ProposalCache.ComputeCacheKey in isolation.
-        var marker = Guid.NewGuid().ToString("N");
+        //
+        // Marker truncated to 8 hex characters, not the full 32: a full GUID's hex digits are
+        // exactly the kind of high-entropy-looking run the Sanitizer's own entropy detector
+        // exists to catch (ProposeAsync sanitizes the LLM's response before returning it), so
+        // using one at full length made this test genuinely flaky -- it failed only when a given
+        // random GUID's specific digit distribution happened to cross the entropy threshold.
+        var marker = Guid.NewGuid().ToString("N")[..8];
         var scoped = new[] { new ScopedSource("Fixture.Type", $"Method_{marker}", $"public bool Method_{marker}() => true;") };
         var ollamaResponse = new LlmResponse(
             $$"""[{"name": "FromOllama_{{marker}}", "description": "d", "sourceCode": "[Property]\npublic bool FromOllama_{{marker}}() => true;"}]""",
