@@ -86,4 +86,20 @@ public class SynthesizerTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Theory]
+    [InlineData("netstandard2.0;netstandard2.1;net6.0;net7.0;net10.0", "net10.0")]
+    [InlineData("net6.0;net7.0", "net7.0")]
+    [InlineData("net472;net48", "net472")]
+    [InlineData("netstandard2.0", "netstandard2.0")]
+    public void SelectBestTargetFramework_PicksTheHighestRunnableModernFramework(string targetFrameworks, string expected)
+    {
+        // Caught testing against a real multi-targeted OSS library (CliWrap): picking the first
+        // listed framework unconditionally picked netstandard2.0, which Microsoft.NET.Test.Sdk
+        // refuses to run at all. A net5.0+ moniker is required to host a runnable test project;
+        // netstandardX.Y and classic .NET Framework monikers are library-only or unsupported,
+        // so a modern one must be preferred whenever the project offers one, highest version
+        // first. When none is available, the first listed framework is kept as a last resort.
+        Assert.Equal(expected, Synthesizer.SelectBestTargetFramework(targetFrameworks));
+    }
 }

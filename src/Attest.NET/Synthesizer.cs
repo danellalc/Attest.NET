@@ -200,12 +200,41 @@ public sealed partial class Synthesizer : ISynthesizer
 
         var multiple = document.Descendants("TargetFrameworks").FirstOrDefault()?.Value;
         if (!string.IsNullOrWhiteSpace(multiple))
-            return multiple.Split(';', StringSplitOptions.RemoveEmptyEntries)[0];
+            return SelectBestTargetFramework(multiple);
 
         throw new AttestSynthesisFailedException(
             candidateName,
             $"Could not find a TargetFramework or TargetFrameworks element in '{targetProjectPath}'.");
     }
+
+    // Caught testing against a real multi-targeted OSS library (CliWrap: netstandard2.0;
+    // netstandard2.1;net6.0;net7.0;net10.0): picking the first listed framework unconditionally
+    // picked netstandard2.0, which Microsoft.NET.Test.Sdk refuses to run tests against at all
+    // (it is a library-only compatibility target, not something a test host can execute). A
+    // modern net5.0+ moniker, highest version available, is what a runnable scratch test
+    // project actually needs; older frameworks are kept only as a last-resort fallback so this
+    // still attempts something (and fails with a clear build error) rather than throwing here.
+    internal static string SelectBestTargetFramework(string targetFrameworksList)
+    {
+        var frameworks = targetFrameworksList.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var bestModern = frameworks
+            .Select(framework => (Framework: framework, Match: ModernDotNetFrameworkPattern().Match(framework)))
+            .Where(candidate => candidate.Match.Success)
+            .OrderByDescending(candidate => int.Parse(candidate.Match.Groups[1].Value))
+            .ThenByDescending(candidate => int.Parse(candidate.Match.Groups[2].Value))
+            .Select(candidate => candidate.Framework)
+            .FirstOrDefault();
+
+        return bestModern ?? frameworks[0];
+    }
+
+    // Modern .NET TFMs (net5.0 and up) always have a dot between major and minor version;
+    // classic .NET Framework monikers (net48, net472, ...) never do, so this excludes them
+    // without needing an explicit denylist, and equally excludes netstandardX.Y/netcoreappX.Y
+    // by requiring the "net" prefix to be followed directly by digits.
+    [GeneratedRegex(@"^net(\d+)\.(\d+)$")]
+    private static partial Regex ModernDotNetFrameworkPattern();
 
     private const string IsolatingBuildProps = """
         <Project>
