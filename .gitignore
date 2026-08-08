@@ -3,6 +3,11 @@ PLANO.md
 CLAUDE.md
 AGENTS.md
 
+# Secrets — never commit
+chave.txt
+*.key
+.env
+
 # Throwaway exploration, not part of the shipped src/ layout
 spike/
 
