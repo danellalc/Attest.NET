@@ -205,7 +205,14 @@ public sealed partial class Sanitizer : ISanitizer
     // A quoted value can legitimately contain the SAME quote character, escaped by doubling it
     // (standard ADO.NET connection-string quoting): 'it''s' means the literal value it's. The
     // naive '[^']*' alternative stops at that first doubled quote, leaking everything after it.
-    [GeneratedRegex(@"\b(?:password|pwd)\s*=\s*(?:'(?:[^']|'')*'|""(?:[^""]|"""")*""|[^;'""\s]+)", RegexOptions.IgnoreCase)]
+    //
+    // The unquoted alternative's charset excludes '.', '(' and ')' on purpose: without that,
+    // this matched ordinary C# property assignment too, not just connection-string syntax.
+    // Caught testing against real code (CliWrap's `processStartInfo.Password =
+    // Credentials.Password.ToSecureString();`): the old charset let the "value" run all the way
+    // to the trailing ';', redacting a whole method-call chain as if it were a secret. A real
+    // connection-string password value is never itself a C# member-access or call expression.
+    [GeneratedRegex(@"\b(?:password|pwd)\s*=\s*(?:'(?:[^']|'')*'|""(?:[^""]|"""")*""|[^;'"".()\s]+)", RegexOptions.IgnoreCase)]
     private static partial Regex ConnectionStringPasswordPattern();
 
     [GeneratedRegex(@"[A-Za-z0-9+/_=-]{20,}")]

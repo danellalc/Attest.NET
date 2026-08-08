@@ -290,4 +290,34 @@ public class SanitizerTests
         Assert.Equal(content, result.RedactedContent);
         Assert.Empty(result.Findings);
     }
+
+    [Fact]
+    public void Sanitize_OrdinaryPasswordPropertyAssignment_DoesNotRedactTheMethodCallChain()
+    {
+        // Caught testing against real code (CliWrap's Command.Execution.cs): an ordinary C#
+        // property assignment whose left side happens to be named "Password" is not a
+        // connection string. The old unquoted-value charset had no way to tell "=" (connection
+        // string syntax) apart from " = <C# expression>" (assignment syntax) and swallowed the
+        // whole right-hand-side expression, including unrelated method calls, up to the ';'.
+        const string content = "processStartInfo.Password = Credentials.Password.ToSecureString();";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.Contains("ToSecureString()", result.RedactedContent);
+    }
+
+    [Fact]
+    public void Sanitize_UnquotedConnectionStringPasswordWithNoSpacesAroundEquals_StillRedacted()
+    {
+        // The fix for the false positive above must not break the actual real-world shape this
+        // pattern exists for: a connection string embedded directly in source, tight key=value
+        // syntax with no surrounding quotes around the password value specifically.
+        const string secret = "Sup3rSecretValue123";
+        var content = $"Server=tcp:my.server.com;Password={secret};Database=prod;";
+
+        var result = _sanitizer.Sanitize(content);
+
+        Assert.DoesNotContain(secret, result.RedactedContent);
+        Assert.Contains(result.Findings, f => f.Category == "ConnectionStringPassword");
+    }
 }
