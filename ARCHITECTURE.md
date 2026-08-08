@@ -2,14 +2,15 @@
 
 ## Packaging
 
-Four projects internally. **Two packages published.**
+Three projects, three packages published.
 
 ```
+Attest.Core    the language-agnostic contracts: stage interfaces, funnel report, rejection reasons
 Attest.NET     the library: the loop bound to FsCheck + Stryker.NET
-Attest.Cli        dotnet tool: attest --diff, doctor, CI integration, PR comments
+Attest.Cli        dotnet tool: attest --diff, init, doctor (CI-step usable today; a dedicated GitHub Action with PR comments is v1 scope, not built yet)
 ```
 
-`Attest.Core` (the language-agnostic loop) ships inside `Attest.NET`; it becomes its own package only when a second adapter exists to consume it. Do not pre-fragment for a future that may not arrive.
+`Attest.NET` depends on `Attest.Core` as an ordinary NuGet dependency, so `Attest.Core` is published in lockstep rather than embedded — the alternative (merging its DLL into `Attest.NET`'s package via a custom pack target) trades one extra published package for real build fragility. It stays a thin, stable contracts layer; do not pre-fragment further for a second adapter that may not arrive.
 
 ## Pipeline
 
@@ -29,6 +30,8 @@ git diff
 ```
 
 Stages 1, 2, 4, 5, 6, 7 are deterministic. Stage 3 is the only place an LLM exists.
+
+WRONG and TRIVIAL are the two rejection reasons that say something about a candidate's quality; a handful of narrower, named reasons (synthesis failure, a tooling crash mid-validation-or-falsification, exceeding the mutant ceiling) exist alongside them for outcomes that are not a verdict on the candidate at all — see `RejectionReason` in `Attest.Core`.
 
 **Two boundaries, both absolute:**
 
@@ -51,7 +54,7 @@ Stages 1, 2, 4, 5, 6, 7 are deterministic. Stage 3 is the only place an LLM exis
 
 Scope too narrow and properties miss the changed behavior; too wide and you re-inherit whole-repo mutation cost.
 
-v1 rule: changed methods plus their direct callers **within the solution**, not just the same project. Layered architecture (Web → Application → Domain across projects) is the .NET default, and a same-project-only rule would miss the most common case. `internal` callers count; `InternalsVisibleTo` is respected. A configurable ceiling on mutant count (`--max-mutants`, default 200) with a **named report** of anything excluded when it trips; silent truncation is a lie.
+v1 rule: changed methods plus their direct callers **within the solution**, not just the same project. Layered architecture (Web → Application → Domain across projects) is the .NET default, and a same-project-only rule would miss the most common case. `internal` callers count; `InternalsVisibleTo` is respected. A configurable ceiling on mutant count (`maxMutants` in `attest.json`, default 200); a candidate whose scope exceeds it is rejected with a named `MutantCeilingExceeded` reason in the funnel report, not silently dropped. There is no CLI flag for the ceiling today — only the config file.
 
 ### Stryker.NET is a dependency with known sharp edges
 
@@ -73,7 +76,7 @@ A property involving time, I/O or async can pass validation and fail falsificati
 
 ### Cost control
 
-One proposal call per changed-file batch, no retry loops, no agentic wandering. Token spend printed in the report. `--max-llm-cost` mirrors `--max-mutants`. `--dry-run` shows what would be proposed without calling anything. Model deprecation is a named risk: provider/model is config, not code, and `attest doctor` checks the configured model still exists before anything costs money.
+One proposal call per changed-file batch, no retry loops, no agentic wandering. Token spend printed in the report. A per-run LLM cost ceiling (`--max-llm-cost`, mirroring the mutant ceiling) is v1.x, not built yet. Model deprecation is a named risk: provider/model is config, not code. `attest doctor` checks this today only for Ollama, which can be queried for its installed models without cost; for Anthropic it can only confirm the API key is set, since checking model existence would mean spending an API call.
 
 ### The zero-delivery case is a designed outcome
 

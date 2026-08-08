@@ -20,11 +20,11 @@ Both failure modes are machine-detectable. That is the whole idea.
 
 ```bash
 dotnet tool install -g Attest.Cli
-attest --diff origin/main
+attest --diff origin/main --project path/to/YourProject.csproj
 ```
 
 1. **Scope.** Reads your diff: changed files, changed lines, the methods that own them.
-2. **Sanitize.** A deterministic secret scanner runs over the scoped code **before anything reaches an LLM**. Keys, connection strings and high-entropy tokens are redacted; in CI, `--fail-on-secret` is the default and stops the run instead.
+2. **Sanitize.** A deterministic secret scanner runs over the scoped code **before anything reaches an LLM**. Keys, connection strings and high-entropy tokens are redacted before the code — or the report — ever leaves the Sanitizer.
 3. **Propose.** An LLM proposes candidate properties: invariants, idempotency, ordering, round-trips.
 4. **Validate.** Each candidate runs against your current code. Fails on code that works? The property is wrong. Rejected.
 5. **Falsify.** Attest mutates the changed lines (via Stryker.NET) and re-runs the survivors. Stays green on broken code? The property proves nothing. Rejected.
@@ -61,9 +61,9 @@ So the honest pitch: **the first open productization of propose-then-refute for 
 
 Attest sends scoped source code to the LLM provider **you** configure, and nowhere else. That has consequences the design takes seriously:
 
-- The **Sanitizer** stage (deterministic, no network) scans scoped code for secrets before any proposal call. Redaction is the default; `--fail-on-secret` is the default in CI.
-- The same scan runs **again** on the report before it is rendered: a PR comment is public and permanent, and defense in depth is cheaper than an incident.
-- **Fully local is a first-class path:** with Ollama, code never leaves the machine. `--air-gapped` enforces a local endpoint instead of trusting convention.
+- The **Sanitizer** stage (deterministic, no network) scans scoped code for secrets before any proposal call, and redacts them. There is no opt-out.
+- The same scan runs **again** on the report before it is rendered: a report is meant to be shared, and defense in depth is cheaper than an incident.
+- **Fully local is a first-class path:** set `"provider": "ollama"` in `attest.json` and code never leaves the machine — no Anthropic call is ever made.
 - Diff scoping pulls in direct callers of changed methods, code you may not have looked at in this PR. That is exactly why the Sanitizer is not optional.
 
 ## Language-agnostic by design
@@ -84,7 +84,7 @@ The adapter contract goes public when the first external adapter has a consumer 
 - **It does not prove intent.** See the oracle problem above; that caveat sits next to the promise on purpose.
 - **It does not prove your whole system correct.** That is deterministic simulation territory (Antithesis). Attest proves the code you changed today, on your laptop, in minutes.
 - **It does not trust the LLM.** Proposal only. No LLM judges, classifies or verifies anything.
-- **It does not run mutation on your whole repo.** Diff-scoped, always, with a hard mutant ceiling, and a named report of anything excluded when the ceiling trips.
+- **It does not run mutation on your whole repo.** Diff-scoped, always, with a hard mutant ceiling (`maxMutants` in `attest.json`, default 200); a candidate whose scope exceeds it is rejected with a named `MutantCeilingExceeded` reason in the funnel report, not silently dropped.
 - **It is not a service.** CLI and CI step. No cloud, no account.
 
 ## Supported
@@ -94,7 +94,6 @@ The adapter contract goes public when the first external adapter has a consumer 
 | `net10.0`, `net8.0` | v1 target |
 | xUnit + FsCheck v3 | v1 target |
 | LLM providers | Anthropic, Ollama (fully local) at v1 |
-| SQL-touching code | properties run against Testcontainers when Docker is present; `attest doctor` tells you before anything costs money |
 
 ## Compared to
 
