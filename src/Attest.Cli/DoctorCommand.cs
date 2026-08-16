@@ -111,6 +111,9 @@ internal static class DoctorCommand
         if (string.IsNullOrWhiteSpace(config.BaseUrl))
             return ("openai-compatible", false, "attest.json is missing \"baseUrl\".");
 
+        if (!ProviderFactory.IsAbsoluteHttpUri(config.BaseUrl))
+            return ("openai-compatible", false, $"attest.json's \"baseUrl\" ('{config.BaseUrl}') is not an absolute http:// or https:// URL.");
+
         var apiKey = Environment.GetEnvironmentVariable("LLM_API_KEY");
         if (string.IsNullOrWhiteSpace(apiKey))
             return ("openai-compatible", false, "LLM_API_KEY is not set.");
@@ -121,7 +124,8 @@ internal static class DoctorCommand
 
         // Not verified against the endpoint, same reasoning as Anthropic: an arbitrary
         // configured backend may not be free, so a live call here could cost money to check.
-        return ("openai-compatible", true, $"LLM_API_KEY is set, baseUrl='{config.BaseUrl}' ({pricingNote}). (Not verified against the endpoint.)");
+        return ("openai-compatible", true,
+            $"LLM_API_KEY is set, baseUrl='{config.BaseUrl}' ({pricingNote}). (Not verified against the endpoint: that could cost money to check.)");
     }
 
     private static async Task<(string, bool, string)> CheckOllamaAsync(string model, CancellationToken cancellationToken)

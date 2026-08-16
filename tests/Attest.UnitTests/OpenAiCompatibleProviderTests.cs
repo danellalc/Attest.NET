@@ -227,6 +227,101 @@ public class OpenAiCompatibleProviderTests
     }
 
     [Fact]
+    public void Identity_IncludesJsonMode_NotJustBaseUrlAndModel()
+    {
+        // Caught by the audit that reviewed this file: Schema/Object/None are materially
+        // different request+parse contracts (different response_format, different system-prompt
+        // wrapper instruction, different unwrap behavior), not equivalent config. Switching only
+        // jsonMode on the same diff/backend/model must be a cache miss too, the same class of
+        // staleness the provider-identity fix (the commit right before this file was added)
+        // closed for provider/model.
+        var schemaProvider = new OpenAiCompatibleProvider(
+            new HttpClient(), "key", "llama-3.1-70b", "https://api.example.com/v1", JsonResponseMode.Schema, pricing: null);
+        var objectProvider = new OpenAiCompatibleProvider(
+            new HttpClient(), "key", "llama-3.1-70b", "https://api.example.com/v1", JsonResponseMode.Object, pricing: null);
+        var noneProvider = new OpenAiCompatibleProvider(
+            new HttpClient(), "key", "llama-3.1-70b", "https://api.example.com/v1", JsonResponseMode.None, pricing: null);
+
+        Assert.NotEqual(schemaProvider.Identity, objectProvider.Identity);
+        Assert.NotEqual(objectProvider.Identity, noneProvider.Identity);
+        Assert.NotEqual(schemaProvider.Identity, noneProvider.Identity);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_SendsConfiguredMaxTokens()
+    {
+        var handler = new FakeHttpMessageHandler(_ => SuccessResponse());
+        var provider = new OpenAiCompatibleProvider(
+            new HttpClient(handler), "sk-test-key", "gpt-4o-mini", "https://api.openai.com/v1", JsonResponseMode.Object, pricing: null);
+
+        await provider.CompleteAsync("system", "user", CancellationToken.None);
+
+        Assert.Contains("\"max_tokens\":8192", handler.LastRequestBody);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_NullMessageContent_ThrowsNamedExceptionInsteadOfCrashing()
+    {
+        // A real, spec-legal OpenAI response shape (a tool-call finish_reason, or some refusal
+        // responses) has "content": null. System.Text.Json's default deserializer accepts this
+        // into a non-nullable-looking record property with no exception, so nothing before this
+        // fix would catch it before it reached UnwrapPropertiesArray or the Sanitizer as a raw
+        // null and crashed with an unhandled ArgumentNullException.
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """{"choices": [{"message": {"role": "assistant", "content": null}}], "usage": {"prompt_tokens": 10, "completion_tokens": 0}}""",
+                Encoding.UTF8, "application/json"),
+        });
+        var provider = new OpenAiCompatibleProvider(
+            new HttpClient(handler), "sk-test-key", "gpt-4o-mini", "https://api.openai.com/v1", JsonResponseMode.Object, pricing: null);
+
+        var exception = await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
+
+        Assert.Contains("no message content", exception.Message);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_MissingUsageField_ThrowsNamedExceptionInsteadOfCrashing()
+    {
+        // A non-conforming or minimal self-hosted server (the class of backend this provider is
+        // explicitly meant to support) can omit "usage" entirely; System.Text.Json's default
+        // deserializer leaves it null rather than throwing, and dereferencing it unguarded used
+        // to crash with a raw NullReferenceException instead of a named exception.
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """{"choices": [{"message": {"role": "assistant", "content": "{\"properties\": []}"}}]}""",
+                Encoding.UTF8, "application/json"),
+        });
+        var provider = new OpenAiCompatibleProvider(
+            new HttpClient(handler), "sk-test-key", "gpt-4o-mini", "https://api.openai.com/v1", JsonResponseMode.Object, pricing: null);
+
+        var exception = await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
+
+        Assert.Contains("usage", exception.Message);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_NonAbsoluteBaseUrl_ThrowsNamedExceptionNotRaw()
+    {
+        // Defense in depth: ProviderFactory validates baseUrl before this class is ever
+        // constructed, but this class must not trust that -- a scheme-less baseUrl reaches
+        // HttpClient as a relative URI and throws InvalidOperationException, which used to
+        // propagate completely unhandled since the catch only covered HttpRequestException/
+        // TaskCanceledException.
+        var provider = new OpenAiCompatibleProvider(
+            new HttpClient(), "sk-test-key", "gpt-4o-mini", "api.openai.com/v1", JsonResponseMode.Object, pricing: null);
+
+        var exception = await Assert.ThrowsAsync<AttestProposalFailedException>(
+            () => provider.CompleteAsync("system", "user", CancellationToken.None));
+
+        Assert.Contains("Could not reach", exception.Message);
+    }
+
+    [Fact]
     public async Task CompleteAsync_NonSuccessStatus_ThrowsNamedExceptionWithBody()
     {
         var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)

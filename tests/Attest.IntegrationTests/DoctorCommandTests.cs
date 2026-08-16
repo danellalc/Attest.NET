@@ -114,6 +114,34 @@ public class DoctorCommandTests
     }
 
     [Fact]
+    public async Task RunAsync_OpenAiCompatibleWithSchemeLessBaseUrl_FailsInsteadOfReportingOk()
+    {
+        // Caught by the audit: this check used to make no live call and no format validation
+        // either, so a scheme-less baseUrl (a plausible typo) reported [OK] here and only
+        // crashed the CLI with a raw .NET exception on the first real attest --diff run.
+        await RunGitAsync("init", "-b", "main");
+        await File.WriteAllTextAsync(Path.Combine(_repositoryRoot, "attest.json"), """
+            {"provider": "openai-compatible", "model": "gpt-4o-mini", "baseUrl": "api.openai.com/v1"}
+            """);
+        var originalKey = Environment.GetEnvironmentVariable("LLM_API_KEY");
+        Environment.SetEnvironmentVariable("LLM_API_KEY", "sk-test");
+
+        try
+        {
+            var output = new StringWriter();
+
+            var exitCode = await DoctorCommand.RunAsync(_repositoryRoot, output, CancellationToken.None);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("[FAIL] openai-compatible", output.ToString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LLM_API_KEY", originalKey);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_CancelledBeforeCompletion_ReturnsCancelledExitCodeInsteadOfThrowingRaw()
     {
         // Program.cs now wires a real, user-driven CancellationToken into DoctorCommand (via

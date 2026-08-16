@@ -124,7 +124,7 @@ FsCheck v3 is the canonical .NET property framework with mature xUnit integratio
 ## Roadmap
 
 **v1: the loop, .NET**
-Sanitizer, diff scoping (solution-wide callers), LLM proposal (Anthropic, Ollama), FsCheck synthesis with custom-generator escape hatch, validation, diff-scoped falsification with mutant-count verification, quarantine, evidence with re-verified kills, funnel report (including the zero case), `attest --diff`, `attest init`, `attest doctor`, GitHub Action with fork-PR and fetch-depth guidance documented.
+Sanitizer, diff scoping (solution-wide callers), LLM proposal (Anthropic, Ollama, or any OpenAI-compatible endpoint), FsCheck synthesis with custom-generator escape hatch, validation, diff-scoped falsification with mutant-count verification, quarantine, evidence with re-verified kills, funnel report (including the zero case), `attest --diff`, `attest init`, `attest doctor`, GitHub Action with fork-PR and fetch-depth guidance documented.
 
 **v1.x: quick wins**
 SARIF and JSON output formats (`--format`): code scanning and downstream tooling respectively. `--max-llm-cost`. PR comments that edit in place instead of stacking (the #1 complaint against existing PR bots). Signed evidence export (JSON). `--trace-id`: pass-through requirement/ticket tag on every delivered property, no new verification. Webhook notifications (Slack/Teams-compatible, a single POST to a URL the user owns, no account, no hosting). **`--compare-suite`: run the Falsifier against the tests the repo already has: "do your existing tests kill mutants?" answered with a number, no LLM involved.** That last one is close to a standalone entry product and the strongest possible demo material.

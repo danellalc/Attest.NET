@@ -1,9 +1,10 @@
 namespace Attest.NET;
 
 /// <summary>
-/// A single LLM backend the Proposer can call. V1 has exactly two implementations,
-/// <see cref="AnthropicProvider"/> and <see cref="OllamaProvider"/>; a third provider is
-/// deliberately not built ahead of a real request for one.
+/// A single LLM backend the Proposer can call. Three implementations ship: <see cref="AnthropicProvider"/>,
+/// <see cref="OllamaProvider"/> (fully local), and <see cref="OpenAiCompatibleProvider"/> (any
+/// backend speaking the OpenAI Chat Completions API shape), covering the hosted, local, and
+/// bring-your-own-endpoint cases without a bespoke implementation per vendor.
 /// </summary>
 public interface ILlmProvider
 {

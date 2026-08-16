@@ -56,7 +56,14 @@ internal static class DiffCommand
         }
         catch (AttestException ex)
         {
-            error.WriteLine($"attest: {ex.Message}");
+            // Sanitized like every other diagnostic output on this path: OpenAiCompatibleProvider
+            // is the one provider whose exception Message can embed the user-configured baseUrl
+            // verbatim (e.g. "Could not reach '...'" ), and a self-hosted gateway URL is exactly
+            // the shape (userinfo-style embedded credentials) Sanitizer.PasswordInUrlPattern
+            // exists to catch. Unsanitized here would be the only diagnostic emitted at all for a
+            // connection failure, since ExtractDiagnosticOutput has nothing to add in that case.
+            var safeMessage = new Sanitizer().Sanitize(ex.Message).RedactedContent;
+            error.WriteLine($"attest: {safeMessage}");
 
             if (ExtractDiagnosticOutput(ex) is { } diagnostic)
             {

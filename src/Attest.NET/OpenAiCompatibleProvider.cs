@@ -76,10 +76,12 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
     }
 
     /// <inheritdoc/>
-    // The base URL is part of the identity, not just the model name: two different backends
-    // (a paid API and a self-hosted server, say) can legitimately use the identical model
-    // string, and the proposal cache must not treat their answers as interchangeable.
-    public string Identity => $"openai-compatible:{_baseUrl}:{_model}";
+    // The base URL and jsonMode are both part of the identity, not just the model name: two
+    // different backends can legitimately use the identical model string, and switching
+    // jsonMode on the same diff/backend/model is a materially different request and parse
+    // contract (BuildResponseFormat, WrapperInstruction) -- the proposal cache must not treat
+    // any of these as interchangeable.
+    public string Identity => $"openai-compatible:{_baseUrl}:{_model}:{_jsonMode}";
 
     // "json_object" and "json_schema" response formats constrain the TOP-LEVEL shape of the
     // response to an object, not an array, in several real OpenAI-compatible implementations
@@ -136,8 +138,15 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
         {
             httpResponse = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or NotSupportedException
+            && !cancellationToken.IsCancellationRequested)
         {
+            // InvalidOperationException/NotSupportedException are HttpClient's own reaction to a
+            // baseUrl that isn't a valid absolute http(s) URI (a relative or scheme-less string,
+            // or an unsupported scheme) -- ProviderFactory validates this before ever
+            // constructing this class, but that validation living one layer away is exactly the
+            // kind of thing a future refactor could silently drop, so this is defense in depth,
+            // not the primary guard.
             throw new AttestProposalFailedException($"Could not reach '{_baseUrl}': {ex.Message}", "");
         }
 
@@ -165,14 +174,26 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
             if (body is null || body.Choices.Count == 0)
                 throw new AttestProposalFailedException($"Response body from '{_baseUrl}' had no choices.", "");
 
-            var rawText = body.Choices[0].Message.Content;
+            // Every field below is nullable in the DTO because System.Text.Json's default
+            // reflection deserializer silently accepts a missing or JSON-null member into a
+            // non-nullable-looking record property instead of throwing (no `required` marker,
+            // no RespectNullableAnnotations configured) -- a self-hosted or non-conforming
+            // OpenAI-compatible server omitting "usage", or a message with a null "content" (a
+            // real, spec-legal shape for a tool-call finish_reason or a refusal), must fail with
+            // a named exception here, not a raw NullReferenceException/ArgumentNullException
+            // three layers up in Proposer or UnwrapPropertiesArray.
+            var rawText = body.Choices[0].Message?.Content
+                ?? throw new AttestProposalFailedException($"Response from '{_baseUrl}' had no message content.", "");
+            var usage = body.Usage
+                ?? throw new AttestProposalFailedException($"Response from '{_baseUrl}' had no \"usage\" field.", "");
+
             var text = _jsonMode == JsonResponseMode.None ? rawText : UnwrapPropertiesArray(rawText);
             var cost = _pricing is { } pricing
-                ? body.Usage.PromptTokens / 1_000_000m * pricing.InputPerMillion
-                    + body.Usage.CompletionTokens / 1_000_000m * pricing.OutputPerMillion
+                ? usage.PromptTokens / 1_000_000m * pricing.InputPerMillion
+                    + usage.CompletionTokens / 1_000_000m * pricing.OutputPerMillion
                 : (decimal?)null;
 
-            return new LlmResponse(text, body.Usage.PromptTokens, body.Usage.CompletionTokens, cost);
+            return new LlmResponse(text, usage.PromptTokens, usage.CompletionTokens, cost);
         }
     }
 
@@ -229,13 +250,13 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
 
     private sealed record OpenAiMessageDto(
         [property: JsonPropertyName("role")] string Role,
-        [property: JsonPropertyName("content")] string Content);
+        [property: JsonPropertyName("content")] string? Content);
 
     private sealed record OpenAiResponseDto(
         [property: JsonPropertyName("choices")] List<OpenAiChoiceDto> Choices,
-        [property: JsonPropertyName("usage")] OpenAiUsageDto Usage);
+        [property: JsonPropertyName("usage")] OpenAiUsageDto? Usage);
 
-    private sealed record OpenAiChoiceDto([property: JsonPropertyName("message")] OpenAiMessageDto Message);
+    private sealed record OpenAiChoiceDto([property: JsonPropertyName("message")] OpenAiMessageDto? Message);
 
     private sealed record OpenAiUsageDto(
         [property: JsonPropertyName("prompt_tokens")] int PromptTokens,
