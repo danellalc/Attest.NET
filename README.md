@@ -4,7 +4,28 @@ Property-based tests that carry proof. Attest proposes properties for the code y
 
 > Status: in development. This README describes the design being built; see the [roadmap](ARCHITECTURE.md#roadmap).
 
-> [GIF placeholder: will be recorded from the first real run before launch. No invented numbers here.]
+> [GIF placeholder: recording pending. The numbers below are from a real run, not invented —
+> see the exact reproduction steps at the bottom of this section.]
+
+```
+$ attest --diff 13bc13d~1 --project CliWrap/CliWrap.csproj
+
+Attest: 2 proposed, 1 delivered, 1 rejected, 0 quarantined.
+[##############################]
+
+Delivered:
+  [OK] DeconstructMatchesProperties: Deconstructing a BufferedCommandResult yields the same values as its ExitCode, StandardOutput and StandardError properties.
+       killed by Block removal mutation at BufferedCommandResult.cs:30
+
+Rejected:
+  [Trivial] ImplicitStringConversionEqualsStandardOutput: Killed zero mutants.
+
+LLM cost: $0.0448 (5948 in / 1798 out)
+```
+
+Run live against [CliWrap](https://github.com/Tyrrrz/CliWrap)'s own commit `13bc13d` (real open-source
+.NET code, not a toy fixture), with Claude Sonnet 5 as the provider. To reproduce: clone CliWrap,
+`git checkout 13bc13d`, then run the command above against that checkout with `ANTHROPIC_API_KEY` set.
 
 ## The problem
 
@@ -31,6 +52,10 @@ attest --diff origin/main --project path/to/YourProject.csproj
 6. **Deliver.** What remains is true *and* useful. Each property ships with the mutant it killed, and the kill is re-verified before the report is emitted, never stored on faith.
 
 The LLM proposes. The machine refutes. You receive only what survived.
+
+Real domain types rarely have a public constructor reflection can drive — see
+[`examples/custom-generators`](examples/custom-generators) for the escape hatch
+(`customGeneratorsType` in `attest.json`), proven end to end, not just documented.
 
 ## What this proves, and what it doesn't
 

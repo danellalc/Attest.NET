@@ -84,7 +84,15 @@ Known limitation: secrets are not available to fork PRs on GitHub. For public re
 
 Run `attest init` to generate this file interactively instead of writing it by hand. `maxLlmCost`, `failOnSecret`, `quarantineRetries` and `webhookUrl` are not real fields today — a per-run cost ceiling, secret-scan gating and webhook notifications are all v1.x/roadmap; passing them is silently ignored, not an error.
 
-Custom generators for domain types (private constructors, EF entities) are v1 design scope — the escape hatch the Synthesizer needs to survive real domain types — but are not implemented yet. There is no `examples/` folder in the repo today.
+Custom generators for domain types (private constructors, EF entities) are implemented: set `customGeneratorsType` in `attest.json` to the fully qualified name of a static class exposing `Arbitrary<T>`-returning members (FsCheck's own Arbitrary-provider convention), and the Synthesizer wires it into the generated test class as `[Properties(Arbitrary = [typeof(YourNamespace.YourGenerators)])]`. Registering the generator changes real behavior, not just compilation: FsCheck's reflection-based default cannot construct a type with no public constructor, so validation genuinely fails without it and genuinely passes with it -- see `tests/Attest.IntegrationTests/SynthesizerTests.cs` for the end-to-end proof.
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-5",
+  "customGeneratorsType": "MyProject.Testing.MyDomainGenerators"
+}
+```
 
 ## Key guarantees
 

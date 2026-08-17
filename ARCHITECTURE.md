@@ -47,7 +47,7 @@ WRONG and TRIVIAL are the two rejection reasons that say something about a candi
 "LLM text becomes a compilable FsCheck test" works for records and DTOs and probably breaks on real domain types: private constructors, EF-attached entities, DI-resolved services. The panel that reviewed this design called it the single most uncertain piece, and the plan treats it that way:
 
 - v1 strategy: reflection-based construction with per-property overrides, honest failure (`AttestUnsynthesizableTypeException`, naming the type and why) when construction is impossible.
-- **A custom-generator escape hatch is v1 scope, not a nice-to-have.** Every serious PBT tool has one; a user must be able to register `Arb`/`Gen` instances for their domain types and have the Synthesizer pick them up. Without this, the tool dies on first contact with a real codebase.
+- **A custom-generator escape hatch is v1 scope, not a nice-to-have.** Every serious PBT tool has one; a user must be able to register `Arb`/`Gen` instances for their domain types and have the Synthesizer pick them up. Without this, the tool dies on first contact with a real codebase. **Implemented**: `customGeneratorsType` in `attest.json` names a static Arbitrary-provider class; the Synthesizer emits `[Properties(Arbitrary = [typeof(...)])]` on the generated test class, FsCheck's own convention, no bespoke registration mechanism invented.
 - Generator synthesis for domain types is shared territory with EFCore.AutoSeed (same author, same problem: "construct a valid `Order`"); extraction of the common core is roadmap, not v1.
 
 ### Diff scoping that actually holds
