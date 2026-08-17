@@ -39,6 +39,89 @@ public class SynthesizerTests
     }
 
     [Fact]
+    public async Task SynthesizeAsync_DomainTypeWithNoPublicConstructor_ValidatesOnlyWithACustomGeneratorRegistered()
+    {
+        // The "custom-generator escape hatch" ARCHITECTURE.md calls v1 scope, not a nice-to-have:
+        // FsCheck's own reflection-based default cannot construct a type with no public
+        // constructor (a private constructor plus a static factory -- the exact shape of a real
+        // domain type, and of an EF-attached entity). Proven end to end here, not just that the
+        // generated code compiles: the SAME candidate against the SAME target project genuinely
+        // behaves differently with the registered generator than without it.
+        var root = Path.Combine(Path.GetTempPath(), $"attest-custom-generator-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var csprojPath = Path.Combine(root, "MoneyFixture.csproj");
+            await File.WriteAllTextAsync(csprojPath, """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                    <Nullable>enable</Nullable>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <PackageReference Include="FsCheck" Version="3.3.4" />
+                  </ItemGroup>
+                </Project>
+                """);
+            await File.WriteAllTextAsync(Path.Combine(root, "Money.cs"), """
+                namespace MoneyFixture;
+
+                public sealed class Money
+                {
+                    public decimal Amount { get; }
+                    private Money(decimal amount) => Amount = amount;
+                    public static Money Create(decimal amount) => new(amount);
+                }
+                """);
+            await File.WriteAllTextAsync(Path.Combine(root, "MoneyGenerators.cs"), """
+                namespace MoneyFixture;
+
+                using FsCheck;
+                using FsCheck.Fluent;
+
+                public static class MoneyGenerators
+                {
+                    public static Arbitrary<Money> Money() =>
+                        Arb.From(Gen.Choose(0, 1000).Select(x => MoneyFixture.Money.Create(x)));
+                }
+                """);
+
+            var candidate = new PropertyCandidate(
+                Name: "MoneyAmountIsNeverNegative",
+                Description: "A Money instance's Amount is never negative.",
+                SourceCode: """
+                    [Property]
+                    public bool MoneyAmountIsNeverNegative(MoneyFixture.Money money)
+                    {
+                        return money.Amount >= 0;
+                    }
+                    """);
+
+            var synthesizer = new Synthesizer();
+            var validator = new Validator();
+
+            var withoutGenerator = await synthesizer.SynthesizeAsync(candidate, csprojPath, CancellationToken.None);
+            var withoutGeneratorResult = await validator.ValidateAsync(withoutGenerator, CancellationToken.None);
+
+            var withGenerator = await synthesizer.SynthesizeAsync(
+                candidate, csprojPath, CancellationToken.None, customGeneratorsType: "MoneyFixture.MoneyGenerators");
+            var withGeneratorResult = await validator.ValidateAsync(withGenerator, CancellationToken.None);
+
+            // The exact failure shape of "FsCheck could not construct Money on its own" is not
+            // the point being proven (it could be a thrown exception during generation, an
+            // inconclusive run, or a result that never reflects real Money instances) -- the
+            // point is that registering the generator is what makes the SAME property source
+            // genuinely validate, which only a real run, not a compile check, can show.
+            Assert.NotEqual(ValidationOutcome.Valid, withoutGeneratorResult.Outcome);
+            Assert.Equal(ValidationOutcome.Valid, withGeneratorResult.Outcome);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task SynthesizeAsync_PropertyThatDoesNotCompile_ThrowsAttestSynthesisFailedException()
     {
         var candidate = new PropertyCandidate(

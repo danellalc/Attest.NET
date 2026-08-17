@@ -21,13 +21,14 @@ public sealed partial class Synthesizer : ISynthesizer
 
     // Bump when BuildCsproj's or BuildTestFile's template shape changes, so cached scratch
     // directories from an older Synthesizer version are never silently reused.
-    private const string TemplateVersion = "2";
+    private const string TemplateVersion = "3";
 
     /// <inheritdoc/>
     public async Task<SynthesizedTest> SynthesizeAsync(
         PropertyCandidate candidate,
         string targetProjectPath,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? customGeneratorsType = null)
     {
         ValidateCandidateName(candidate.Name);
 
@@ -44,7 +45,7 @@ public sealed partial class Synthesizer : ISynthesizer
             // transitively (ComputeTargetFingerprint), so a file deleted, locked (an IDE build,
             // an antivirus scan), or briefly access-denied between the directory listing and the
             // read is a real, not theoretical, risk on every call.
-            scratchDirectory = ComputeScratchDirectory(candidate, testClassName, targetProjectPath);
+            scratchDirectory = ComputeScratchDirectory(candidate, testClassName, targetProjectPath, customGeneratorsType);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -89,7 +90,7 @@ public sealed partial class Synthesizer : ISynthesizer
 
         await File.WriteAllTextAsync(
             Path.Combine(scratchDirectory, $"{testClassName}.cs"),
-            BuildTestFile(testClassName, candidate),
+            BuildTestFile(testClassName, candidate, customGeneratorsType),
             cancellationToken).ConfigureAwait(false);
 
         var buildResult = await ProcessRunner.RunAsync(
@@ -118,7 +119,7 @@ public sealed partial class Synthesizer : ISynthesizer
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
     private static partial Regex ValidCandidateNamePattern();
 
-    private static string ComputeScratchDirectory(PropertyCandidate candidate, string testClassName, string targetProjectPath)
+    private static string ComputeScratchDirectory(PropertyCandidate candidate, string testClassName, string targetProjectPath, string? customGeneratorsType)
     {
         var targetFingerprint = ComputeTargetFingerprint(targetProjectPath);
         var contentHash = ComputeContentHash(string.Join(
@@ -128,7 +129,12 @@ public sealed partial class Synthesizer : ISynthesizer
             targetProjectPath,
             targetFingerprint,
             FsCheckVersion,
-            TemplateVersion));
+            TemplateVersion,
+            // Same generated .csproj/.cs shape otherwise: without this, turning
+            // customGeneratorsType on or off (or changing it) for the same candidate against
+            // the same target would silently reuse a scratch build compiled under the OLD
+            // setting instead of picking up the new Arbitrary reference.
+            customGeneratorsType ?? ""));
 
         return Path.Combine(Path.GetTempPath(), "attest-scratch", $"{testClassName}-{contentHash}");
     }
@@ -320,19 +326,30 @@ public sealed partial class Synthesizer : ISynthesizer
     // proposed candidate still goes through the exact same real compiler either way.
     internal static string TargetNamespace(string targetProjectPath) => Path.GetFileNameWithoutExtension(targetProjectPath);
 
-    private static string BuildTestFile(string testClassName, PropertyCandidate candidate) => $$"""
+    private static string BuildTestFile(string testClassName, PropertyCandidate candidate, string? customGeneratorsType) => $$"""
         namespace {{testClassName}};
 
-        [Properties(Replay = "{{ValidationSeeds.First}}")]
+        {{PropertiesAttribute(ValidationSeeds.First, customGeneratorsType)}}
         public class {{FirstSeedClassName(candidate)}}
         {
             {{candidate.SourceCode}}
         }
 
-        [Properties(Replay = "{{ValidationSeeds.Second}}")]
+        {{PropertiesAttribute(ValidationSeeds.Second, customGeneratorsType)}}
         public class {{SecondSeedClassName(candidate)}}
         {
             {{candidate.SourceCode}}
         }
         """;
+
+    // FsCheck.Xunit's [Properties] Arbitrary parameter is how a user-registered Arbitrary<T>
+    // reaches generation for a domain type FsCheck's own reflection-based default cannot
+    // construct -- exactly the "custom-generator escape hatch" ARCHITECTURE.md calls v1 scope.
+    // The type name is trusted as-is: a wrong one is an ordinary "type or namespace not found"
+    // compile error on the scratch project, the same AttestSynthesisFailedException path any
+    // other bad reference in a candidate's own proposed code already takes.
+    private static string PropertiesAttribute(string replaySeed, string? customGeneratorsType) =>
+        customGeneratorsType is null
+            ? $"""[Properties(Replay = "{replaySeed}")]"""
+            : $"""[Properties(Replay = "{replaySeed}", Arbitrary = [typeof({customGeneratorsType})])]""";
 }

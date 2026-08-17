@@ -42,7 +42,8 @@ internal static class DiffCommand
                 new Falsifier(),
                 new EvidenceReporter(new Falsifier()));
 
-            var result = await runner.RunAsync(repositoryRoot, targetProjectPath, baseRef, config.MaxMutants, cancellationToken);
+            var result = await runner.RunAsync(
+                repositoryRoot, targetProjectPath, baseRef, config.MaxMutants, cancellationToken, config.CustomGeneratorsType);
 
             var rendered = ReportRenderer.Render(result, useColor);
 

@@ -10,7 +10,8 @@ internal sealed record AttestConfig(
     string? BaseUrl,
     string JsonMode,
     decimal? InputPricePerMillion,
-    decimal? OutputPricePerMillion)
+    decimal? OutputPricePerMillion,
+    string? CustomGeneratorsType = null)
 {
     internal const string FileName = "attest.json";
     internal const int DefaultMaxMutants = 200;
@@ -47,7 +48,9 @@ internal sealed record AttestConfig(
         var maxMutants = dto.MaxMutants is > 0 ? dto.MaxMutants.Value : DefaultMaxMutants;
         var jsonMode = string.IsNullOrWhiteSpace(dto.JsonMode) ? DefaultJsonMode : dto.JsonMode;
 
-        return new AttestConfig(dto.Provider, dto.Model, maxMutants, dto.BaseUrl, jsonMode, dto.InputPricePerMillion, dto.OutputPricePerMillion);
+        return new AttestConfig(
+            dto.Provider, dto.Model, maxMutants, dto.BaseUrl, jsonMode,
+            dto.InputPricePerMillion, dto.OutputPricePerMillion, dto.CustomGeneratorsType);
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -59,5 +62,6 @@ internal sealed record AttestConfig(
         [property: JsonPropertyName("baseUrl")] string? BaseUrl = null,
         [property: JsonPropertyName("jsonMode")] string? JsonMode = null,
         [property: JsonPropertyName("inputPricePerMillion")] decimal? InputPricePerMillion = null,
-        [property: JsonPropertyName("outputPricePerMillion")] decimal? OutputPricePerMillion = null);
+        [property: JsonPropertyName("outputPricePerMillion")] decimal? OutputPricePerMillion = null,
+        [property: JsonPropertyName("customGeneratorsType")] string? CustomGeneratorsType = null);
 }

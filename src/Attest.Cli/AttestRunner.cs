@@ -39,7 +39,8 @@ internal sealed class AttestRunner
         string targetProjectPath,
         string baseRef,
         int maxMutants,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? customGeneratorsType = null)
     {
         var scope = await _diffScope.ComputeScopeAsync(repositoryRoot, baseRef, cancellationToken).ConfigureAwait(false);
         if (scope.ChangedMethods.Count == 0)
@@ -88,7 +89,7 @@ internal sealed class AttestRunner
             SynthesizedTest synthesized;
             try
             {
-                synthesized = await _synthesizer.SynthesizeAsync(candidate, targetProjectPath, cancellationToken).ConfigureAwait(false);
+                synthesized = await _synthesizer.SynthesizeAsync(candidate, targetProjectPath, cancellationToken, customGeneratorsType).ConfigureAwait(false);
             }
             catch (AttestSynthesisFailedException ex)
             {
