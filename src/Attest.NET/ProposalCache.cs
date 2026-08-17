@@ -6,7 +6,7 @@ namespace Attest.NET;
 
 internal static class ProposalCache
 {
-    internal static string ComputeCacheKey(IReadOnlyList<ScopedSource> scopedMethods, string providerIdentity)
+    internal static string ComputeCacheKey(IReadOnlyList<ScopedSource> scopedMethods, string providerIdentity, string targetProjectName)
     {
         // Each field is hashed to a fixed 32-byte digest before being combined, not joined as
         // text with a delimiter: SanitizedSourceCode is real multi-line C# source that can
@@ -14,6 +14,11 @@ internal static class ProposalCache
         // otherwise flatten to the identical string and collide on the same cache key.
         using var combined = new MemoryStream();
         combined.Write(SHA256.HashData(Encoding.UTF8.GetBytes(providerIdentity)));
+        // targetProjectName is part of the prompt text itself now (Proposer.BuildUserPrompt), not
+        // just metadata: re-running the exact same diff against a different --project target is a
+        // materially different prompt and must be a cache miss, not a stale reuse of an answer
+        // written for a different compilation boundary.
+        combined.Write(SHA256.HashData(Encoding.UTF8.GetBytes(targetProjectName)));
         foreach (var method in scopedMethods)
         {
             combined.Write(SHA256.HashData(Encoding.UTF8.GetBytes(method.ContainingType)));

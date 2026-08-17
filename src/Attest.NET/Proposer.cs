@@ -26,16 +26,16 @@ public sealed class Proposer : IProposer
     }
 
     /// <inheritdoc/>
-    public async Task<ProposalResult> ProposeAsync(IReadOnlyList<ScopedSource> scopedMethods, CancellationToken cancellationToken)
+    public async Task<ProposalResult> ProposeAsync(IReadOnlyList<ScopedSource> scopedMethods, string targetProjectName, CancellationToken cancellationToken)
     {
         if (scopedMethods.Count == 0)
             return new ProposalResult([], new LlmUsage(0, 0, 0m), FromCache: false);
 
-        var cacheKey = ProposalCache.ComputeCacheKey(scopedMethods, _provider.Identity);
+        var cacheKey = ProposalCache.ComputeCacheKey(scopedMethods, _provider.Identity, targetProjectName);
         if (ProposalCache.TryRead(cacheKey) is { } cached)
             return new ProposalResult(ParseCandidates(cached), new LlmUsage(0, 0, 0m), FromCache: true);
 
-        var userPrompt = BuildUserPrompt(scopedMethods);
+        var userPrompt = BuildUserPrompt(scopedMethods, targetProjectName);
         var response = await _provider.CompleteAsync(SystemPrompt, userPrompt, cancellationToken).ConfigureAwait(false);
 
         // Only the inbound direction (source code into the prompt) was ever sanitized; the
@@ -52,10 +52,21 @@ public sealed class Proposer : IProposer
         return new ProposalResult(candidates, usage, FromCache: false);
     }
 
-    internal static string BuildUserPrompt(IReadOnlyList<ScopedSource> scopedMethods)
+    internal static string BuildUserPrompt(IReadOnlyList<ScopedSource> scopedMethods, string targetProjectName)
     {
         var builder = new StringBuilder();
         builder.AppendLine("Propose FsCheck properties for the following changed methods.");
+        builder.AppendLine();
+        builder.AppendLine(
+            $"Your proposed sourceCode will be compiled ONLY against the project \"{targetProjectName}\" " +
+            "and its own references. Some of the methods shown below may come from a DIFFERENT project " +
+            "in the same diff (a caller, or a test file) -- read them for context, but never reference a " +
+            $"type, in your own sourceCode, that exists only outside \"{targetProjectName}\" (a test-only " +
+            "helper class is the most common case). If you are not sure a type is available to the target " +
+            $"project, do not reference it. A `using {targetProjectName};` is already added for you, so " +
+            "top-level types and extension methods in that exact namespace do not need qualifying -- a " +
+            $"NESTED namespace under it (e.g. {targetProjectName}.SomeSubNamespace) is not covered by that " +
+            "using, and still needs a fully qualified name or its own explicit using.");
         builder.AppendLine();
 
         foreach (var method in scopedMethods)
@@ -224,9 +235,15 @@ public sealed class Proposer : IProposer
         - The method signature is `[Property] public bool Name(<FsCheck-generatable parameters>)`.
         - The method name matches the JSON "name" field exactly; it becomes a class member name.
         - Return true for inputs outside the property's domain (guard and return true), never throw.
-        - Reference the type under test by its fully qualified name; do not assume any `using`.
+        - Reference any type outside the target project's own root namespace by its fully
+          qualified name; do not assume a `using` for anything other than what the user message
+          below tells you is already provided.
         - Do not write a property that is trivially true for every input; a property that
           cannot fail is worthless here, however it is written.
+        - Your sourceCode is compiled against ONE target project, named in the user message below.
+          A method shown to you for context can come from elsewhere (a caller, a test file in the
+          same diff) -- do not copy a type reference from it unless that type is also available to
+          the target project. When unsure, prefer built-in .NET types over an unfamiliar one.
         - You may declare private fields or helper methods alongside the `[Property]` method
           if the property needs them; do not declare a class, namespace, or using directive.
 

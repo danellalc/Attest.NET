@@ -8,6 +8,7 @@ internal sealed class FakeLlmProvider : ILlmProvider
 
     public int CallCount { get; private set; }
     public string Identity { get; }
+    public string? LastUserPrompt { get; private set; }
 
     public FakeLlmProvider(LlmResponse response, string identity = "fake:test-model")
     {
@@ -18,6 +19,7 @@ internal sealed class FakeLlmProvider : ILlmProvider
     public Task<LlmResponse> CompleteAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken)
     {
         CallCount++;
+        LastUserPrompt = userPrompt;
         return Task.FromResult(_response);
     }
 }

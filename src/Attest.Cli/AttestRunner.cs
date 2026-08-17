@@ -53,7 +53,13 @@ internal sealed class AttestRunner
             scopedSources.Add(new ScopedSource(method.ContainingType, method.MethodName, sanitized.RedactedContent));
         }
 
-        var proposal = await _proposer.ProposeAsync(scopedSources, cancellationToken).ConfigureAwait(false);
+        // A changed method handed to the Proposer for context can come from a different project
+        // than this one (a caller, or -- the case actually observed testing against real code --
+        // a new test method landing in the same diff): the model needs to know explicitly which
+        // project its own answer is judged against, or it can't tell a type it merely read about
+        // from a type it can actually reference.
+        var targetProjectName = Path.GetFileNameWithoutExtension(targetProjectPath);
+        var proposal = await _proposer.ProposeAsync(scopedSources, targetProjectName, cancellationToken).ConfigureAwait(false);
 
         // Deduplicated up front, not just tolerated downstream: EvidenceReporter's own
         // GroupBy-plus-first already treats two value-equal candidates as one expected input,

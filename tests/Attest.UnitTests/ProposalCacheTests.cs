@@ -21,8 +21,8 @@ public class ProposalCacheTests
             new ScopedSource("Foo", "Bar", "return 1;\nBaz\nQux\nreturn 2;"),
         };
 
-        var keyA = ProposalCache.ComputeCacheKey(twoMethods, "fake:test-model");
-        var keyB = ProposalCache.ComputeCacheKey(oneMethod, "fake:test-model");
+        var keyA = ProposalCache.ComputeCacheKey(twoMethods, "fake:test-model", "TargetProject");
+        var keyB = ProposalCache.ComputeCacheKey(oneMethod, "fake:test-model", "TargetProject");
 
         Assert.NotEqual(keyA, keyB);
     }
@@ -32,8 +32,8 @@ public class ProposalCacheTests
     {
         var methods = new[] { new ScopedSource("Foo", "Bar", "return 1;") };
 
-        var keyA = ProposalCache.ComputeCacheKey(methods, "fake:test-model");
-        var keyB = ProposalCache.ComputeCacheKey(methods, "fake:test-model");
+        var keyA = ProposalCache.ComputeCacheKey(methods, "fake:test-model", "TargetProject");
+        var keyB = ProposalCache.ComputeCacheKey(methods, "fake:test-model", "TargetProject");
 
         Assert.Equal(keyA, keyB);
     }
@@ -48,10 +48,24 @@ public class ProposalCacheTests
         // from one model kept being served forever as if it were a fresh answer from another.
         var methods = new[] { new ScopedSource("Foo", "Bar", "return 1;") };
 
-        var ollamaKey = ProposalCache.ComputeCacheKey(methods, "ollama:qwen2.5-coder:14b");
-        var anthropicKey = ProposalCache.ComputeCacheKey(methods, "anthropic:claude-sonnet-5");
+        var ollamaKey = ProposalCache.ComputeCacheKey(methods, "ollama:qwen2.5-coder:14b", "TargetProject");
+        var anthropicKey = ProposalCache.ComputeCacheKey(methods, "anthropic:claude-sonnet-5", "TargetProject");
 
         Assert.NotEqual(ollamaKey, anthropicKey);
+    }
+
+    [Fact]
+    public void ComputeCacheKey_SameMethodsDifferentTargetProject_ProducesDifferentKey()
+    {
+        // targetProjectName is embedded in the prompt text itself (Proposer.BuildUserPrompt), not
+        // just metadata: the exact same diff re-run against a different --project target is a
+        // materially different prompt, and must be a cache miss like any other prompt change.
+        var methods = new[] { new ScopedSource("Foo", "Bar", "return 1;") };
+
+        var keyA = ProposalCache.ComputeCacheKey(methods, "anthropic:claude-sonnet-5", "ProjectA");
+        var keyB = ProposalCache.ComputeCacheKey(methods, "anthropic:claude-sonnet-5", "ProjectB");
+
+        Assert.NotEqual(keyA, keyB);
     }
 
     [Fact]

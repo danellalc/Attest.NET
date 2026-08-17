@@ -148,4 +148,52 @@ public class SynthesizerTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Theory]
+    [InlineData(@"C:\repo\src\FluentValidation\FluentValidation.csproj", "FluentValidation")]
+    [InlineData(@"C:\repo\src\CliWrap\CliWrap.csproj", "CliWrap")]
+    public void TargetNamespace_DerivesFromTheProjectFileName(string targetProjectPath, string expected)
+    {
+        Assert.Equal(expected, Synthesizer.TargetNamespace(targetProjectPath));
+    }
+
+    [Fact]
+    public async Task SynthesizeAsync_GeneratedScratchProject_IsWellFormedXmlWithATargetNamespaceUsing()
+    {
+        // Caught live, testing against real FluentValidation code with a real Anthropic key: a
+        // model-proposed property called an extension method declared in the target's own root
+        // namespace (Must, WithMessage -- the norm for a fluent API) and failed to compile,
+        // because C# extension-method resolution needs a `using`, not just a fully-qualified
+        // receiver. Fixed by adding a generated <Using Include="{TargetNamespace}" /> to the
+        // scratch .csproj, the same mechanism already used for Xunit/FsCheck.Xunit.
+        //
+        // The FIRST version of this fix put the explanation inline as an XML comment inside the
+        // generated .csproj and broke every single scratch build outright: XML comments cannot
+        // contain "--", and the very sentence explaining why extension methods need a `using`
+        // ("...for fluent APIs -- FluentValidation's Must/WithMessage/etc...") had one. This test
+        // parses the generated file as real XML, so a regression of that exact shape fails loudly
+        // here instead of only against a live API call against real code.
+        var root = Path.Combine(Path.GetTempPath(), $"attest-target-namespace-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var csprojPath = Path.Combine(root, "MyLibrary.csproj");
+            File.WriteAllText(csprojPath, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(root, "Calculator.cs"), "namespace MyLibrary; public class Calculator { public int Add(int a, int b) => a + b; }");
+
+            var candidate = new PropertyCandidate("TargetNamespaceUsingTest", "d", "[Property] public bool TargetNamespaceUsingTest() => true;");
+            var synthesizer = new Synthesizer();
+
+            var synthesized = await synthesizer.SynthesizeAsync(candidate, csprojPath, CancellationToken.None);
+
+            var generatedCsprojText = await File.ReadAllTextAsync(synthesized.ScratchProjectPath);
+            var document = System.Xml.Linq.XDocument.Parse(generatedCsprojText); // throws if malformed
+            var usingIncludes = document.Descendants("Using").Select(e => e.Attribute("Include")?.Value).ToList();
+            Assert.Contains("MyLibrary", usingIncludes);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }

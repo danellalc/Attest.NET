@@ -21,7 +21,7 @@ public sealed partial class Synthesizer : ISynthesizer
 
     // Bump when BuildCsproj's or BuildTestFile's template shape changes, so cached scratch
     // directories from an older Synthesizer version are never silently reused.
-    private const string TemplateVersion = "1";
+    private const string TemplateVersion = "2";
 
     /// <inheritdoc/>
     public async Task<SynthesizedTest> SynthesizeAsync(
@@ -274,6 +274,14 @@ public sealed partial class Synthesizer : ISynthesizer
         </Project>
         """;
 
+    // The generated <Using> for the target's own root namespace is ambient the same way a real
+    // consumer's project would import it. Without it, an extension method declared there (the
+    // norm for fluent APIs: FluentValidation's Must/WithMessage/etc. are exactly this shape)
+    // cannot resolve via dot-syntax no matter how the candidate's own source qualifies the
+    // receiver, since C# extension-method lookup is using-directive-based, not reachable by a
+    // fully-qualified prefix the way a type reference is. This explanation lives here, not as an
+    // XML comment in the generated .csproj below, on purpose: MSBuild's XML comments reject "--"
+    // outright (a real bug this exact sentence caused the first time it was inline).
     private static string BuildCsproj(string targetFramework, string targetProjectPath) => $"""
         <Project Sdk="Microsoft.NET.Sdk">
 
@@ -295,6 +303,7 @@ public sealed partial class Synthesizer : ISynthesizer
           <ItemGroup>
             <Using Include="Xunit" />
             <Using Include="FsCheck.Xunit" />
+            <Using Include="{TargetNamespace(targetProjectPath)}" />
           </ItemGroup>
 
           <ItemGroup>
@@ -303,6 +312,13 @@ public sealed partial class Synthesizer : ISynthesizer
 
         </Project>
         """;
+
+    // SDK-style projects default RootNamespace to AssemblyName, which defaults to the .csproj
+    // file name, unless either is explicitly overridden in the project file -- a convention, not
+    // a guarantee, but a safe one to lean on here: getting it wrong just means this one
+    // convenience `using` does not fire, not that anything compiles incorrectly, since every
+    // proposed candidate still goes through the exact same real compiler either way.
+    internal static string TargetNamespace(string targetProjectPath) => Path.GetFileNameWithoutExtension(targetProjectPath);
 
     private static string BuildTestFile(string testClassName, PropertyCandidate candidate) => $$"""
         namespace {{testClassName}};

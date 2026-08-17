@@ -119,6 +119,70 @@ public class AttestRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_PassesTheTargetProjectNameToTheProposer()
+    {
+        // Caught testing against real code with a real Anthropic key (FluentValidation): a
+        // changed method shown to the model for context came from the diff's own test file, and
+        // the model copied a type reference from it that exists only in that test project, not
+        // the target -- a guaranteed Unsynthesizable rejection. AttestRunner must tell the
+        // Proposer which project its own answer will actually be compiled against; asserted here
+        // via the real DiffScope-to-Proposer wiring, not just Proposer's own unit tests.
+        var projectDir = Path.Combine(_repositoryRoot, "FixtureTargetName");
+        Directory.CreateDirectory(projectDir);
+
+        var csprojPath = Path.Combine(projectDir, "FixtureTargetName.csproj");
+        await File.WriteAllTextAsync(csprojPath, """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+            </Project>
+            """);
+
+        var calculatorPath = Path.Combine(projectDir, "Calculator.cs");
+        await File.WriteAllTextAsync(calculatorPath, """
+            namespace FixtureTargetName;
+
+            public class Calculator
+            {
+                public int Add(int a, int b) => a + b;
+            }
+            """);
+
+        await RunGitAsync("init", "-b", "main");
+        await RunGitAsync("add", ".");
+        var baseCommit = await CommitAsync("initial");
+
+        var marker = Guid.NewGuid().ToString("N");
+        await File.WriteAllTextAsync(calculatorPath, $$"""
+            namespace FixtureTargetName;
+
+            public class Calculator
+            {
+                // test-marker: {{marker}}
+                public int Add(int a, int b) => a + b + 0;
+            }
+            """);
+
+        var provider = new FakeLlmProvider(new LlmResponse("[]", 10, 0, 0m));
+        var runner = new AttestRunner(
+            new DiffScope(),
+            new Sanitizer(),
+            new Proposer(provider),
+            new Synthesizer(),
+            new Validator(),
+            new Falsifier(),
+            new EvidenceReporter(new Falsifier()));
+
+        await runner.RunAsync(_repositoryRoot, csprojPath, baseCommit, 200, CancellationToken.None);
+
+        Assert.NotNull(provider.LastUserPrompt);
+        Assert.Contains("FixtureTargetName", provider.LastUserPrompt);
+        Assert.Contains("compiled ONLY against the project", provider.LastUserPrompt);
+    }
+
+    [Fact]
     public async Task RunAsync_ValidatorCrashesForOneCandidate_RejectsOnlyThatCandidateAndStillDeliversTheOther()
     {
         var projectDir = Path.Combine(_repositoryRoot, "Fixture2");

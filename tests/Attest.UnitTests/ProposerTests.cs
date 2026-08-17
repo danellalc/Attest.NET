@@ -166,10 +166,26 @@ public class ProposerTests
     {
         var scoped = new[] { new ScopedSource("My.Namespace.Calculator", "Add", "public int Add(int a, int b) => a + b;") };
 
-        var prompt = Proposer.BuildUserPrompt(scoped);
+        var prompt = Proposer.BuildUserPrompt(scoped, "TargetProject");
 
         Assert.Contains("My.Namespace.Calculator.Add", prompt);
         Assert.Contains("public int Add(int a, int b) => a + b;", prompt);
+    }
+
+    [Fact]
+    public void BuildUserPrompt_NamesTheTargetProjectAndWarnsAgainstOtherProjectsTypes()
+    {
+        // Caught testing against real code with a real Anthropic key (FluentValidation): a
+        // changed method shown for context came from the diff's own test file, and the model
+        // copied a type reference from it that only exists in that test project, not the target
+        // -- a compile-failure Unsynthesizable rejection every time. Better context up front,
+        // not more tolerance in the Synthesizer: the trust boundary stays exactly as strict.
+        var scoped = new[] { new ScopedSource("Some.Type", "Method", "public void Method() { }") };
+
+        var prompt = Proposer.BuildUserPrompt(scoped, "FluentValidation");
+
+        Assert.Contains("FluentValidation", prompt);
+        Assert.Contains("compiled ONLY against the project", prompt);
     }
 
     [Fact]
@@ -178,7 +194,7 @@ public class ProposerTests
         var provider = new FakeLlmProvider(new LlmResponse("[]", 0, 0, 0m));
         var proposer = new Proposer(provider);
 
-        var result = await proposer.ProposeAsync([], CancellationToken.None);
+        var result = await proposer.ProposeAsync([], "TargetProject", CancellationToken.None);
 
         Assert.Empty(result.Candidates);
         Assert.Equal(0, provider.CallCount);
@@ -202,7 +218,7 @@ public class ProposerTests
         var provider = new FakeLlmProvider(response);
         var proposer = new Proposer(provider);
 
-        var result = await proposer.ProposeAsync(scoped, CancellationToken.None);
+        var result = await proposer.ProposeAsync(scoped, "TargetProject", CancellationToken.None);
 
         Assert.Equal(1, provider.CallCount);
         Assert.False(result.FromCache);
@@ -225,8 +241,8 @@ public class ProposerTests
         var provider = new FakeLlmProvider(response);
         var proposer = new Proposer(provider);
 
-        var first = await proposer.ProposeAsync(scoped, CancellationToken.None);
-        var second = await proposer.ProposeAsync(scoped, CancellationToken.None);
+        var first = await proposer.ProposeAsync(scoped, "TargetProject", CancellationToken.None);
+        var second = await proposer.ProposeAsync(scoped, "TargetProject", CancellationToken.None);
 
         Assert.Equal(1, provider.CallCount);
         Assert.False(first.FromCache);
@@ -254,12 +270,12 @@ public class ProposerTests
         var provider = new FakeLlmProvider(response);
         var proposer = new Proposer(provider);
 
-        var result = await proposer.ProposeAsync(scoped, CancellationToken.None);
+        var result = await proposer.ProposeAsync(scoped, "TargetProject", CancellationToken.None);
 
         var candidate = Assert.Single(result.Candidates);
         Assert.DoesNotContain(secret, candidate.SourceCode);
 
-        var cacheKey = ProposalCache.ComputeCacheKey(scoped, provider.Identity);
+        var cacheKey = ProposalCache.ComputeCacheKey(scoped, provider.Identity, "TargetProject");
         var cached = ProposalCache.TryRead(cacheKey);
         Assert.NotNull(cached);
         Assert.DoesNotContain(secret, cached);
@@ -290,8 +306,8 @@ public class ProposerTests
         var ollamaProvider = new FakeLlmProvider(ollamaResponse, identity: $"ollama:model-{marker}");
         var anthropicProvider = new FakeLlmProvider(anthropicResponse, identity: $"anthropic:model-{marker}");
 
-        var fromOllama = await new Proposer(ollamaProvider).ProposeAsync(scoped, CancellationToken.None);
-        var fromAnthropic = await new Proposer(anthropicProvider).ProposeAsync(scoped, CancellationToken.None);
+        var fromOllama = await new Proposer(ollamaProvider).ProposeAsync(scoped, "TargetProject", CancellationToken.None);
+        var fromAnthropic = await new Proposer(anthropicProvider).ProposeAsync(scoped, "TargetProject", CancellationToken.None);
 
         Assert.Equal(1, ollamaProvider.CallCount);
         Assert.Equal(1, anthropicProvider.CallCount);
