@@ -24,6 +24,34 @@ public class InitCommandTests
     }
 
     [Fact]
+    public void Run_AnthropicOrOllamaChoice_OmitsOpenAiCompatibleOnlyFieldsFromTheWrittenFile()
+    {
+        // A user who never touches the openai-compatible provider shouldn't see
+        // baseUrl/jsonMode/pricing show up as four unexplained "null" lines in a config file
+        // they wrote for anthropic or ollama.
+        InitCommand.Run(_directory, new StringReader("anthropic\n\n\n"), TextWriter.Null);
+
+        var written = File.ReadAllText(Path.Combine(_directory, "attest.json"));
+
+        Assert.DoesNotContain("baseUrl", written);
+        Assert.DoesNotContain("jsonMode", written);
+        Assert.DoesNotContain("inputPricePerMillion", written);
+        Assert.DoesNotContain("outputPricePerMillion", written);
+    }
+
+    [Fact]
+    public void Run_OpenAiCompatibleChoice_IncludesBaseUrlButOmitsUnsetPricingFields()
+    {
+        InitCommand.Run(_directory, new StringReader("openai-compatible\ngpt-4o-mini\nhttps://api.openai.com/v1\n\n"), TextWriter.Null);
+
+        var written = File.ReadAllText(Path.Combine(_directory, "attest.json"));
+
+        Assert.Contains("\"baseUrl\": \"https://api.openai.com/v1\"", written);
+        Assert.DoesNotContain("inputPricePerMillion", written);
+        Assert.DoesNotContain("outputPricePerMillion", written);
+    }
+
+    [Fact]
     public void Run_ExplicitAnthropicChoice_WritesAnthropicDefaultModel()
     {
         var exitCode = InitCommand.Run(_directory, new StringReader("anthropic\n\n\n"), TextWriter.Null);

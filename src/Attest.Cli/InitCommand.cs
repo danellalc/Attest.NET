@@ -1,10 +1,18 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Attest.Cli;
 
 internal static class InitCommand
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    // WhenWritingNull, not always: an anthropic/ollama setup has no business seeing
+    // baseUrl/jsonMode/pricing fields it never touched, but an openai-compatible setup with a
+    // real baseUrl and no pricing should still show baseUrl in the written file.
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
 
     internal static int Run(string repositoryRoot, TextReader input, TextWriter output)
