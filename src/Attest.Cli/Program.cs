@@ -5,12 +5,23 @@ const string HelpText = """
     attest -- property-based tests that carry proof.
 
     Usage:
-      attest --diff <base-ref> --project <target-project-path> [--repo <repository-root>]
+      attest --diff <base-ref> --project <target-project-path> [options]
       attest --compare-suite --diff <base-ref> --test-project <existing-test-project-path> [--repo <repository-root>]
       attest init       Generate attest.json interactively.
       attest doctor     Check the environment (git, dotnet, Stryker, provider config).
       attest --help     Show this message.
       attest --version  Show the installed version.
+
+    Options for --diff:
+      --repo <path>              Repository root (default: current directory).
+      --format text|json|sarif   Output format (default: text).
+      --trace-id <tag>           Pass-through requirement/ticket tag on every delivered property.
+      --export-evidence <path>   Write the report as evidence: <path> (compact JSON) plus
+                                  <path>.sha256 (a SHA-256 digest, or HMAC-SHA256 keyed by the
+                                  ATTEST_EVIDENCE_KEY environment variable if it is set).
+      --max-llm-cost <amount>    Refuse to deliver a report whose LLM call cost more than this
+                                  (USD). The call itself already happened; this does not prevent
+                                  spending, it stops an over-budget result from being delivered.
 
     Configuration lives in attest.json at the repository root.
     https://github.com/danellalc/Attest.NET

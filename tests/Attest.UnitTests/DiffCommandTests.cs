@@ -100,6 +100,90 @@ public class DiffCommandTests
     }
 
     [Fact]
+    public void ExceedsMaxLlmCost_NoCeilingConfigured_ReturnsNull()
+    {
+        var result = new AttestRunResult(new FunnelReport(0, [], [], []), new LlmUsage(100, 50, 5.00m), FromCache: false);
+
+        Assert.Null(DiffCommand.ExceedsMaxLlmCost(result, maxLlmCost: null));
+    }
+
+    [Fact]
+    public void ExceedsMaxLlmCost_ActualCostUnderCeiling_ReturnsNull()
+    {
+        var result = new AttestRunResult(new FunnelReport(0, [], [], []), new LlmUsage(100, 50, 0.01m), FromCache: false);
+
+        Assert.Null(DiffCommand.ExceedsMaxLlmCost(result, maxLlmCost: 0.05m));
+    }
+
+    [Fact]
+    public void ExceedsMaxLlmCost_ActualCostOverCeiling_ReturnsTheActualCost()
+    {
+        var result = new AttestRunResult(new FunnelReport(0, [], [], []), new LlmUsage(100, 50, 5.00m), FromCache: false);
+
+        Assert.Equal(5.00m, DiffCommand.ExceedsMaxLlmCost(result, maxLlmCost: 0.05m));
+    }
+
+    [Fact]
+    public void ExceedsMaxLlmCost_ResultIsFromCache_ReturnsNullRegardlessOfCeiling()
+    {
+        // A cached hit reports FromCache=true with whatever cost the FIRST call had -- re-running
+        // the same diff costs $0 for real, so the ceiling must never fire on a cache hit.
+        var result = new AttestRunResult(new FunnelReport(0, [], [], []), new LlmUsage(100, 50, 5.00m), FromCache: true);
+
+        Assert.Null(DiffCommand.ExceedsMaxLlmCost(result, maxLlmCost: 0.05m));
+    }
+
+    [Fact]
+    public void ExceedsMaxLlmCost_ProviderHasNoCostTracking_ReturnsNullRegardlessOfCeiling()
+    {
+        var result = new AttestRunResult(new FunnelReport(0, [], [], []), new LlmUsage(100, 50, null), FromCache: false);
+
+        Assert.Null(DiffCommand.ExceedsMaxLlmCost(result, maxLlmCost: 0.05m));
+    }
+
+    [Fact]
+    public async Task RunAsync_InvalidMaxLlmCost_FailsBeforeTouchingAnyConfigOrRepo()
+    {
+        var error = new StringWriter();
+
+        var exitCode = await DiffCommand.RunAsync(
+            ["--diff", "origin/main", "--project", "Some.csproj", "--max-llm-cost", "not-a-number", "--repo", Path.Combine(Path.GetTempPath(), $"attest-does-not-exist-{Guid.NewGuid():N}")],
+            TextWriter.Null, error, cancellationToken: CancellationToken.None);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--max-llm-cost 'not-a-number' is not a valid non-negative number", error.ToString());
+    }
+
+    [Fact]
+    public async Task RunAsync_NegativeMaxLlmCost_FailsBeforeTouchingAnyConfigOrRepo()
+    {
+        var error = new StringWriter();
+
+        var exitCode = await DiffCommand.RunAsync(
+            ["--diff", "origin/main", "--project", "Some.csproj", "--max-llm-cost", "-1", "--repo", Path.Combine(Path.GetTempPath(), $"attest-does-not-exist-{Guid.NewGuid():N}")],
+            TextWriter.Null, error, cancellationToken: CancellationToken.None);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("is not a valid non-negative number", error.ToString());
+    }
+
+    [Fact]
+    public async Task RunAsync_UnsupportedFormat_FailsBeforeTouchingAnyConfigOrRepo()
+    {
+        // Checked unconditionally, ahead of everything else: a typo'd --format value is always
+        // wrong regardless of whether a repo or attest.json even exists at --repo, the same
+        // "validate the obviously-wrong static thing first" pattern --project already follows.
+        var error = new StringWriter();
+
+        var exitCode = await DiffCommand.RunAsync(
+            ["--diff", "origin/main", "--project", "Some.csproj", "--format", "xml", "--repo", Path.Combine(Path.GetTempPath(), $"attest-does-not-exist-{Guid.NewGuid():N}")],
+            TextWriter.Null, error, cancellationToken: CancellationToken.None);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--format 'xml' is not supported", error.ToString());
+    }
+
+    [Fact]
     public async Task RunAsync_ExceptionMessageContainsUrlCredentials_SanitizesBeforePrinting()
     {
         // Caught by the audit: OpenAiCompatibleProvider is the one provider whose exception

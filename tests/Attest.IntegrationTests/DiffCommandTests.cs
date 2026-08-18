@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Attest.Cli;
 
 namespace Attest.IntegrationTests;
@@ -45,6 +46,48 @@ public class DiffCommandTests
 
         Assert.Equal(130, exitCode);
         Assert.Contains("cancelled", error.ToString());
+    }
+
+    [Fact]
+    public async Task RunAsync_FormatJson_RealZeroDiffRun_ProducesValidParseableJson()
+    {
+        // Real end-to-end proof, not a renderer-level unit test: --format json actually reaches
+        // DiffCommand's real AttestRunner.RunAsync path (git, DiffScope, config loading) and the
+        // output on stdout is genuinely valid, parseable JSON -- no LLM call needed, since a
+        // zero-diff run (--diff HEAD, nothing changed) short-circuits before any proposal call.
+        await RunGitAsync("init", "-b", "main");
+        var projectPath = Path.Combine(_repositoryRoot, "Foo.csproj");
+        await File.WriteAllTextAsync(projectPath, """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+              </PropertyGroup>
+            </Project>
+            """);
+        await File.WriteAllTextAsync(Path.Combine(_repositoryRoot, "Foo.cs"), "public class Foo { }");
+        await RunGitAsync("add", ".");
+        await CommitAsync("initial");
+
+        await File.WriteAllTextAsync(
+            Path.Combine(_repositoryRoot, "attest.json"),
+            """{"provider": "ollama", "model": "qwen2.5-coder:14b"}""");
+
+        var args = new[]
+        {
+            "--diff", "HEAD",
+            "--project", projectPath,
+            "--format", "json",
+            "--repo", _repositoryRoot,
+        };
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        var exitCode = await DiffCommand.RunAsync(args, output, error, useColor: false, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(output.ToString()); // throws if malformed
+        Assert.Equal(0, document.RootElement.GetProperty("proposedCount").GetInt32());
+        Assert.Equal(0, document.RootElement.GetProperty("delivered").GetArrayLength());
     }
 
     private async Task<string> CommitAsync(string message)
