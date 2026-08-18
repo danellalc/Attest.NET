@@ -9,6 +9,15 @@ public class SynthesizerTests
     private static readonly string TargetProjectPath = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Fixtures", "PriceCalculatorFixture", "PriceCalculatorFixture.csproj"));
 
+    // The repo's own shipped, documented example -- not a second, hand-maintained copy of it.
+    // A prior version of this test embedded Money.cs/MoneyGenerators.cs as inline string
+    // literals, which had already silently drifted from examples/custom-generators/MoneyFixture
+    // (missing the negative-amount guard, a smaller Gen.Choose range) by the time it was caught
+    // in a pre-launch review: nothing forced the two copies to stay in sync. Copying the real
+    // files means an edit to the shipped example is exactly what this test exercises.
+    private static readonly string ExampleMoneyFixtureDirectory = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "examples", "custom-generators", "MoneyFixture"));
+
     [Fact]
     public async Task SynthesizeAsync_ValidProperty_ProducesBuildableScratchProject()
     {
@@ -52,39 +61,9 @@ public class SynthesizerTests
         try
         {
             var csprojPath = Path.Combine(root, "MoneyFixture.csproj");
-            await File.WriteAllTextAsync(csprojPath, """
-                <Project Sdk="Microsoft.NET.Sdk">
-                  <PropertyGroup>
-                    <TargetFramework>net10.0</TargetFramework>
-                    <Nullable>enable</Nullable>
-                  </PropertyGroup>
-                  <ItemGroup>
-                    <PackageReference Include="FsCheck" Version="3.3.4" />
-                  </ItemGroup>
-                </Project>
-                """);
-            await File.WriteAllTextAsync(Path.Combine(root, "Money.cs"), """
-                namespace MoneyFixture;
-
-                public sealed class Money
-                {
-                    public decimal Amount { get; }
-                    private Money(decimal amount) => Amount = amount;
-                    public static Money Create(decimal amount) => new(amount);
-                }
-                """);
-            await File.WriteAllTextAsync(Path.Combine(root, "MoneyGenerators.cs"), """
-                namespace MoneyFixture;
-
-                using FsCheck;
-                using FsCheck.Fluent;
-
-                public static class MoneyGenerators
-                {
-                    public static Arbitrary<Money> Money() =>
-                        Arb.From(Gen.Choose(0, 1000).Select(x => MoneyFixture.Money.Create(x)));
-                }
-                """);
+            File.Copy(Path.Combine(ExampleMoneyFixtureDirectory, "MoneyFixture.csproj"), csprojPath);
+            File.Copy(Path.Combine(ExampleMoneyFixtureDirectory, "Money.cs"), Path.Combine(root, "Money.cs"));
+            File.Copy(Path.Combine(ExampleMoneyFixtureDirectory, "MoneyGenerators.cs"), Path.Combine(root, "MoneyGenerators.cs"));
 
             var candidate = new PropertyCandidate(
                 Name: "MoneyAmountIsNeverNegative",

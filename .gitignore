@@ -5,6 +5,7 @@ AGENTS.md
 
 # Secrets — never commit
 chave.txt
+nuget-key.txt
 *.key
 .env
 
