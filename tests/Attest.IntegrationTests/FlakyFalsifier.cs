@@ -24,4 +24,7 @@ internal sealed class FlakyFalsifier : IFalsifier
         test.Candidate.Name == _failingCandidateName
             ? throw new AttestMutantCeilingExceededException(maxMutants: 1, actualCount: 999)
             : _real.FalsifyAsync(test, scope, cancellationToken);
+
+    public Task<CompareSuiteResult> CompareSuiteAsync(string testProjectPath, MutationScope scope, CancellationToken cancellationToken) =>
+        _real.CompareSuiteAsync(testProjectPath, scope, cancellationToken);
 }

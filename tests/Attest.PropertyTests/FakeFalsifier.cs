@@ -18,4 +18,7 @@ internal sealed class FakeFalsifier : IFalsifier
 
     public Task<FalsificationResult> FalsifyAsync(SynthesizedTest test, MutationScope scope, CancellationToken cancellationToken) =>
         Task.FromResult(new FalsificationResult(test, _onFalsify(test)));
+
+    public Task<CompareSuiteResult> CompareSuiteAsync(string testProjectPath, MutationScope scope, CancellationToken cancellationToken) =>
+        throw new NotSupportedException($"{nameof(FakeFalsifier)} only fakes {nameof(FalsifyAsync)}, used by EvidenceReporter property tests.");
 }

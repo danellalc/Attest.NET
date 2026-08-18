@@ -9,6 +9,9 @@ public class EvidenceReporterTests
     {
         public Task<FalsificationResult> FalsifyAsync(SynthesizedTest test, MutationScope scope, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Should never be called: no candidate in this test reaches re-verification.");
+
+        public Task<CompareSuiteResult> CompareSuiteAsync(string testProjectPath, MutationScope scope, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Should never be called: EvidenceReporter never calls CompareSuiteAsync.");
     }
 
     [Fact]
@@ -59,6 +62,9 @@ public class EvidenceReporterTests
 
             return Task.FromResult(new FalsificationResult(test, [_reproducedKillByCandidateName[test.Candidate.Name]]));
         }
+
+        public Task<CompareSuiteResult> CompareSuiteAsync(string testProjectPath, MutationScope scope, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Should never be called: EvidenceReporter never calls CompareSuiteAsync.");
     }
 
     [Fact]

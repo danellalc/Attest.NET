@@ -6,6 +6,7 @@ const string HelpText = """
 
     Usage:
       attest --diff <base-ref> --project <target-project-path> [--repo <repository-root>]
+      attest --compare-suite --diff <base-ref> --test-project <existing-test-project-path> [--repo <repository-root>]
       attest init       Generate attest.json interactively.
       attest doctor     Check the environment (git, dotnet, Stryker, provider config).
       attest --help     Show this message.
@@ -44,6 +45,10 @@ if (args.Length > 0 && args[0] == "doctor")
     return await DoctorCommand.RunAsync(Directory.GetCurrentDirectory(), Console.Out, cancellation.Token);
 
 var useColor = !Console.IsOutputRedirected && Environment.GetEnvironmentVariable("NO_COLOR") is null;
+
+if (args.Contains("--compare-suite"))
+    return await CompareSuiteCommand.RunAsync(args, Console.Out, Console.Error, useColor, cancellation.Token);
+
 return await DiffCommand.RunAsync(args, Console.Out, Console.Error, useColor, cancellation.Token);
 
 static string InformationalVersion()

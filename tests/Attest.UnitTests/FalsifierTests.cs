@@ -74,4 +74,45 @@ public class FalsifierTests
         Assert.Equal(10, exception.MaxMutants);
         Assert.Equal(11, exception.ActualCount);
     }
+
+    [Fact]
+    public void SelectMatchingProjectReference_SingleReference_ReturnsItUnconditionally()
+    {
+        // A scratch project always has exactly one ProjectReference by construction; no need to
+        // check it against scope at all in that case.
+        var references = new[] { System.IO.Path.GetFullPath("Lib/Lib.csproj") };
+        var scope = new[] { System.IO.Path.GetFullPath("SomewhereElse/Unrelated.cs") };
+
+        var result = Falsifier.SelectMatchingProjectReference(references, scope);
+
+        Assert.Equal(references[0], result);
+    }
+
+    [Fact]
+    public void SelectMatchingProjectReference_MultipleReferences_PicksTheOneContainingAScopedFile()
+    {
+        // Caught testing --compare-suite against Attest's own multi-reference test project:
+        // Stryker refuses to guess which referenced project to mutate, so this has to resolve
+        // the ambiguity the same way a person reading its error message would -- by checking
+        // which referenced project's own directory actually contains a file being mutated.
+        var libA = System.IO.Path.GetFullPath("LibA/LibA.csproj");
+        var libB = System.IO.Path.GetFullPath("LibB/LibB.csproj");
+        var scope = new[] { System.IO.Path.GetFullPath("LibB/Calculator.cs") };
+
+        var result = Falsifier.SelectMatchingProjectReference([libA, libB], scope);
+
+        Assert.Equal(libB, result);
+    }
+
+    [Fact]
+    public void SelectMatchingProjectReference_MultipleReferencesNoneMatchScope_ReturnsNull()
+    {
+        var libA = System.IO.Path.GetFullPath("LibA/LibA.csproj");
+        var libB = System.IO.Path.GetFullPath("LibB/LibB.csproj");
+        var scope = new[] { System.IO.Path.GetFullPath("Unrelated/Calculator.cs") };
+
+        var result = Falsifier.SelectMatchingProjectReference([libA, libB], scope);
+
+        Assert.Null(result);
+    }
 }
