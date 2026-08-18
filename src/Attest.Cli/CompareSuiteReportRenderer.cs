@@ -23,8 +23,15 @@ internal static class CompareSuiteReportRenderer
             return builder.ToString().TrimEnd('\n');
         }
 
+        // Built by hand, not the "P0" format specifier: .NET's own PercentPositivePattern
+        // inserts a space before the "%" sign ("100 %") for InvariantCulture AND for most
+        // non-pt-BR cultures -- local development on a pt-BR machine happened to be the one
+        // culture that doesn't, which is exactly why this only broke in CI, on a Linux runner
+        // with a different default culture. An integer percent built from plain arithmetic has
+        // no locale-dependent formatting at all, so it renders identically everywhere.
         var killRate = (double)result.KilledMutants.Count / result.TestedMutants;
-        var summary = $"compare-suite: your tests killed {result.KilledMutants.Count}/{result.TestedMutants} mutants in this diff ({killRate:P0}).";
+        var killRateText = $"{(int)Math.Round(killRate * 100)}%";
+        var summary = $"compare-suite: your tests killed {result.KilledMutants.Count}/{result.TestedMutants} mutants in this diff ({killRateText}).";
         builder.AppendLine(Colorize(summary, Bold, useColor));
 
         if (result.SurvivedMutants.Count > 0)

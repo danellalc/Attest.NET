@@ -150,11 +150,18 @@ public class SynthesizerTests
     }
 
     [Theory]
-    [InlineData(@"C:\repo\src\FluentValidation\FluentValidation.csproj", "FluentValidation")]
-    [InlineData(@"C:\repo\src\CliWrap\CliWrap.csproj", "CliWrap")]
-    public void TargetNamespace_DerivesFromTheProjectFileName(string targetProjectPath, string expected)
+    [InlineData("FluentValidation")]
+    [InlineData("CliWrap")]
+    public void TargetNamespace_DerivesFromTheProjectFileName(string projectName)
     {
-        Assert.Equal(expected, Synthesizer.TargetNamespace(targetProjectPath));
+        // Path.Combine, not a hardcoded literal with hardcoded separators: a Windows-style
+        // "C:\repo\..." string is not a real path on Linux (backslash is not a separator there),
+        // so Path.GetFileNameWithoutExtension returns almost the whole literal instead of just
+        // the file name -- a real failure caught by CI running on a Linux runner, in a test that
+        // was never exercising a real path on either OS to begin with.
+        var targetProjectPath = Path.Combine("repo", "src", projectName, $"{projectName}.csproj");
+
+        Assert.Equal(projectName, Synthesizer.TargetNamespace(targetProjectPath));
     }
 
     [Theory]
