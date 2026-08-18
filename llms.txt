@@ -41,19 +41,26 @@ Output today is a plain-text funnel report to stdout: delivered properties (each
 
 ## CI usage
 
-Not yet published: a GitHub Action (`danellalc/Attest.NET@v1`) with fork-PR and fetch-depth guidance is v1 scope but not built. Until then, call the CLI directly as a step:
+A reusable GitHub Action lives at this repo's own root (`action.yml`), referenced as `danellalc/Attest.NET` (no stable `@v1` tag yet -- pin `@main` or a specific commit until a versioned tag exists, since the package itself is still `0.1.0`). It installs Attest.Cli and dotnet-stryker and runs `attest --diff`; it does not check out your repo or post PR comments -- your workflow does the checkout, with `fetch-depth: 0` required (the action itself checks for a shallow clone and fails loudly, naming the fix, rather than letting `--diff` fail with an opaque git error three steps later):
 
 ```yaml
-- uses: actions/checkout@v4
-  with:
-    fetch-depth: 0   # REQUIRED: shallow checkout breaks --diff silently
-- run: dotnet tool install -g Attest.Cli
-- run: attest --diff origin/main --project path/to/YourProject.csproj
-  env:
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+on: pull_request
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # REQUIRED: shallow checkout breaks --diff silently
+      - uses: danellalc/Attest.NET@main
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          project: path/to/YourProject.csproj
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-Known limitation: secrets are not available to fork PRs on GitHub. For public repos, run Attest on pushes to main branches, or point a fork-PR run at Ollama instead. A `--fail-on-secret` gate and PR comments that edit themselves in place on subsequent pushes are both roadmap, not implemented: the Sanitizer redacts unconditionally today, and there is no PR-comment-posting mechanism yet.
+Known limitation, and why the action is deliberately NOT skipped via `pull_request_target`: fork PRs never receive repository secrets on GitHub, by design, and Attest compiles and executes the diff's own proposed code (see SECURITY.md) -- running that against an untrusted fork's changes in a context that also has secrets in scope would hand an attacker exactly the access `pull_request_target`'s secret isolation exists to prevent. The `if:` guard above skips the action entirely for fork PRs rather than working around the isolation; run Attest locally or against Ollama for a fork branch instead. PR comments that edit themselves in place on subsequent pushes are still roadmap (v1.1), not implemented: the action's report goes to the workflow log today, not a posted comment.
 
 ## Configuration
 

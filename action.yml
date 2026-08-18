@@ -1,0 +1,46 @@
+name: 'Attest'
+description: 'Property-based tests that carry proof: propose FsCheck properties for your diff, refute them against real code and Stryker.NET mutants, deliver only survivors.'
+branding:
+  icon: 'check-circle'
+  color: 'purple'
+
+inputs:
+  diff-base:
+    description: 'Git ref to diff against.'
+    required: false
+    default: 'origin/main'
+  project:
+    description: 'Path to the target .csproj to test.'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    # The calling workflow owns checkout, not this action -- but fetch-depth: 0 there is what
+    # actually makes --diff work at all, so this failure mode is checked here, explicitly, with
+    # a message naming the fix, instead of failing three steps later inside attest itself with
+    # a raw git error that gives no hint the checkout step is the actual thing to change.
+    - name: Verify full git history is available
+      shell: bash
+      run: |
+        if [ "$(git rev-list --count HEAD 2>/dev/null || echo 1)" = "1" ]; then
+          echo "::error::This checkout looks shallow. attest --diff needs full git history to compute a diff. Add 'fetch-depth: 0' to the actions/checkout step in your workflow, before this action runs."
+          exit 1
+        fi
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: |
+          8.0.x
+          10.0.x
+
+    - name: Install Attest.Cli and dotnet-stryker
+      shell: bash
+      run: |
+        dotnet tool install -g Attest.Cli
+        dotnet tool install -g dotnet-stryker
+
+    - name: attest --diff
+      shell: bash
+      run: attest --diff "${{ inputs.diff-base }}" --project "${{ inputs.project }}"

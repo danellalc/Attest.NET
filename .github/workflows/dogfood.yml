@@ -1,0 +1,35 @@
+name: Dogfood the Action
+
+# Manual only, not on every push: this exercises a real LLM round-trip (via a local Ollama
+# model, so no paid API key/secret is needed) against examples/custom-generators/MoneyFixture,
+# which costs real CI minutes to download and run a model for. It exists to prove action.yml
+# itself actually works end to end, not to gate every commit.
+on:
+  workflow_dispatch:
+    inputs:
+      diff-base:
+        description: 'Git ref to diff MoneyFixture against (must actually differ from HEAD there for a meaningful run).'
+        required: false
+        default: 'HEAD~1'
+
+jobs:
+  dogfood:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Reuses this repo's own attest.json (checked in at the root, provider "ollama") rather
+      # than writing a separate config: one real config to keep in sync, not two.
+      - name: Install Ollama and pull the configured model
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:11434/ >/dev/null && break; sleep 1; done
+          ollama pull "$(grep -o '"model": *"[^"]*"' attest.json | sed 's/.*"model": *"//; s/"$//')"
+
+      - uses: ./
+        with:
+          diff-base: ${{ inputs.diff-base }}
+          project: examples/custom-generators/MoneyFixture/MoneyFixture.csproj

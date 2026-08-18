@@ -7,7 +7,7 @@ Three projects, three packages published.
 ```
 Attest.Core    the language-agnostic contracts: stage interfaces, funnel report, rejection reasons
 Attest.NET     the library: the loop bound to FsCheck + Stryker.NET
-Attest.Cli        dotnet tool: attest --diff, init, doctor (CI-step usable today; a dedicated GitHub Action with PR comments is v1 scope, not built yet)
+Attest.Cli        dotnet tool: attest --diff, init, doctor; a reusable GitHub Action (danellalc/Attest.NET, action.yml at repo root) wraps it -- PR comments (posting the report back, not just logging it) are still v1.1, not built
 ```
 
 `Attest.NET` depends on `Attest.Core` as an ordinary NuGet dependency, so `Attest.Core` is published in lockstep rather than embedded — the alternative (merging its DLL into `Attest.NET`'s package via a custom pack target) trades one extra published package for real build fragility. It stays a thin, stable contracts layer; do not pre-fragment further for a second adapter that may not arrive.
