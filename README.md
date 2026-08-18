@@ -7,7 +7,7 @@ Property-based tests that carry proof. Attest proposes properties for the code y
 
 > Status: in development. This README describes the design being built; see the [roadmap](ARCHITECTURE.md#roadmap).
 
-![Attest running against CliWrap: 2 proposed, 1 delivered, 1 rejected](assets/demo.gif)
+![Attest running against CliWrap: 2 proposed, 1 delivered, 1 rejected](https://raw.githubusercontent.com/danellalc/Attest.NET/main/assets/demo.gif)
 
 The numbers above are from a real run, not invented — see the exact reproduction steps below, or the same transcript as text:
 
