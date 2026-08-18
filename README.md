@@ -57,6 +57,30 @@ Real domain types rarely have a public constructor reflection can drive — see
 [`examples/custom-generators`](examples/custom-generators) for the escape hatch
 (`customGeneratorsType` in `attest.json`), proven end to end, not just documented.
 
+## No LLM required: does your existing suite kill mutants?
+
+```bash
+attest --compare-suite --diff origin/main --test-project path/to/YourProject.Tests.csproj
+```
+
+Same Falsifier, no LLM, no proposal — this mutates the diff's scope and re-runs the tests you
+already have. The answer is a number and a list: which mutants your suite caught, and exactly
+which ones survived, by file and line. Ten seconds to find out whether "we have tests for that"
+is true.
+
+Real output, from a minimal repro (one method with a test, two added without one):
+
+```
+compare-suite: your tests killed 1/3 mutants in this diff (33%).
+
+Survived:
+  [Survived] Arithmetic mutation at Calculator.cs:6
+  [Survived] Arithmetic mutation at Calculator.cs:7
+```
+
+The untested `Multiply` and `Subtract` show up as survivors, exactly as they should — this is
+`--compare-suite` doing its one job, not a cherry-picked number from a real project.
+
 ## What this proves, and what it doesn't
 
 A delivered property attests that **your tests detect change**: it holds on the current code, and it fails when that code is deliberately broken.

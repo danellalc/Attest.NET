@@ -33,11 +33,14 @@ attest --diff origin/main --project path/to/YourProject.csproj
 
 # optionally scope git operations to a different repository root
 attest --diff origin/main --project path/to/YourProject.csproj --repo path/to/repo
+
+# no LLM, no synthesis: does the test suite you already have kill mutants in this diff?
+attest --compare-suite --diff origin/main --test-project path/to/YourProject.Tests.csproj
 ```
 
-`--diff` and `--project` are both required; `--repo` defaults to the current directory. No other flags are parsed today: `--dry-run`, `--max-llm-cost`, `--air-gapped`, `--trace-id`, `--format` do not exist yet. `--max-llm-cost`, `--trace-id` and `--format` (JSON/SARIF output) are on the v1.x roadmap; `--dry-run` and `--air-gapped` are not currently planned. The mutant ceiling is set via `attest.json`'s `maxMutants` field, not a flag.
+`--diff` and `--project` are both required for the main flow; `--repo` defaults to the current directory. `--compare-suite` is a separate mode: pass it alongside `--diff` and `--test-project` (the path to your EXISTING test project, not the code under test) instead of `--project`; it still loads `attest.json` for `maxMutants`, but never creates an LLM provider or proposes anything. No other flags are parsed today: `--dry-run`, `--max-llm-cost`, `--air-gapped`, `--trace-id`, `--format` do not exist yet. `--max-llm-cost`, `--trace-id` and `--format` (JSON/SARIF output) are on the v1.x roadmap; `--dry-run` and `--air-gapped` are not currently planned. The mutant ceiling is set via `attest.json`'s `maxMutants` field, not a flag.
 
-Output today is a plain-text funnel report to stdout: delivered properties (each with the killed mutant as evidence), rejected candidates (reason `Wrong` or `Trivial` for a verdict on the candidate itself, plus a handful of narrower named reasons — synthesis failure, a tooling crash mid-run, exceeding the mutant ceiling — that are not a verdict on the candidate at all), and quarantined candidates (nondeterministic under repeated seeded runs; often a real finding about the code under test). The funnel renders all stage counts even when zero properties are delivered, so "nothing testable in this diff" is distinguishable from "the tool failed". Structured (`--format json`) and SARIF/markdown output are roadmap, not built.
+Output today is a plain-text funnel report to stdout: delivered properties (each with the killed mutant as evidence), rejected candidates (reason `Wrong` or `Trivial` for a verdict on the candidate itself, plus a handful of narrower named reasons — synthesis failure, a tooling crash mid-run, exceeding the mutant ceiling — that are not a verdict on the candidate at all), and quarantined candidates (nondeterministic under repeated seeded runs; often a real finding about the code under test). The funnel renders all stage counts even when zero properties are delivered, so "nothing testable in this diff" is distinguishable from "the tool failed". `--compare-suite`'s own output is a different shape (kill rate plus a list of survived mutants by file:line, no funnel), since there is no LLM proposal to funnel in the first place. Structured (`--format json`) and SARIF/markdown output are roadmap, not built.
 
 ## CI usage
 
