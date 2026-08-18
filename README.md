@@ -90,6 +90,8 @@ Attest sends scoped source code to the LLM provider **you** configure, and nowhe
 - The same scan runs **again** on the report before it is rendered: a report is meant to be shared, and defense in depth is cheaper than an incident.
 - **Fully local is a first-class path:** set `"provider": "ollama"` in `attest.json` and code never leaves the machine — no hosted call is ever made.
 - Diff scoping pulls in direct callers of changed methods, code you may not have looked at in this PR. That is exactly why the Sanitizer is not optional.
+- **Provider terms and MIT-licensed output:** Anthropic's and OpenAI's terms both grant the customer full ownership of API output, with no restriction incompatible with relicensing it MIT — checked directly against their current terms before this note was written. That covers the two providers Attest is tested against; the generic OpenAI-compatible provider can also reach other backends (Groq, DeepSeek, a self-hosted server), and checking that backend's own terms for the same question is on you.
+- **The reverse trust boundary — the LLM's output is untrusted code Attest compiles and runs — is real and is not mitigated by the Sanitizer.** See [SECURITY.md](SECURITY.md).
 
 ## Language-agnostic by design
 

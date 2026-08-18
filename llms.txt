@@ -110,7 +110,7 @@ Custom generators for domain types (private constructors, EF entities) are imple
 - Do not treat delivered properties as proof of intent. They prove tests detect change; the oracle problem is structural. Read the plain-language rendering of each property.
 - Do not skip quarantined results: quarantine usually means the code under test is nondeterministic, which is a finding.
 - Do not disable the Sanitizer or the falsification stage. Each one exists because of a specific documented failure mode (public secret leaks; false-green tests).
-- If synthesis fails on a domain type today, that is a real `Unsynthesizable` rejection, not a bug to work around by excluding the file; a custom-generator escape hatch is v1 scope but not built yet.
+- If synthesis fails on a domain type, that is a real `Unsynthesizable` rejection, not a bug to work around by excluding the file; register a custom generator via `customGeneratorsType` instead (see Configuration above) before assuming the type is unreachable.
 
 ## Not supported
 
