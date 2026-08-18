@@ -21,6 +21,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Description>Property-based tests that carry proof. An LLM proposes properties for the code you changed; Attest refutes each one against your real code and against Stryker.NET mutants of it. Only survivors ship, each with the mutant it killed as evidence.</Description>
+    <PackageTags>property-based-testing;mutation-testing;fscheck;stryker;llm;testing</PackageTags>
   </PropertyGroup>
 
 </Project>

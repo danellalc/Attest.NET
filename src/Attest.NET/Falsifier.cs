@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using Attest.Core;
 
 namespace Attest.NET;
@@ -52,11 +53,34 @@ public sealed class Falsifier : IFalsifier
             // all could silently fall back to the stale one instead of failing loudly.
             var existingRunDirectories = GetRunDirectories(scratchDirectory);
 
-            var runResult = await ProcessRunner.RunAsync(
-                "dotnet-stryker",
-                arguments,
-                scratchDirectory,
-                cancellationToken).ConfigureAwait(false);
+            // dotnet-stryker builds the scratch project itself, which -- same as the Synthesizer's
+            // own `dotnet build` -- also builds the target project the ProjectReference points at,
+            // into that project's own obj/bin. Locked here too, for the same reason: an unrelated
+            // scratch project referencing the same target project must not build it concurrently.
+            var targetProjectPath = ReadTargetProjectPath(test.ScratchProjectPath);
+
+            ProcessResult runResult;
+            if (targetProjectPath is null)
+            {
+                runResult = await ProcessRunner.RunAsync("dotnet-stryker", arguments, scratchDirectory, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                IAsyncDisposable targetLockHandle;
+                try
+                {
+                    targetLockHandle = await ScratchDirectoryLocks.AcquireAsync(targetProjectPath, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    throw new AttestFalsificationFailedException(test.Candidate.Name, $"Could not acquire the target project lock: {ex.Message}");
+                }
+
+                await using (targetLockHandle)
+                {
+                    runResult = await ProcessRunner.RunAsync("dotnet-stryker", arguments, scratchDirectory, cancellationToken).ConfigureAwait(false);
+                }
+            }
 
             var reportPath = FindLatestReport(scratchDirectory, existingRunDirectories, deleteOlder: true);
             if (reportPath is null)
@@ -116,6 +140,26 @@ public sealed class Falsifier : IFalsifier
     {
         if (testedMutantCount > maxMutants)
             throw new AttestMutantCeilingExceededException(maxMutants, testedMutantCount);
+    }
+
+    // The scratch .csproj Synthesizer generated always has exactly one ProjectReference, the
+    // target project (see Synthesizer.BuildCsproj) -- reading it back here avoids widening
+    // SynthesizedTest's public contract just to carry a path Falsifier can already recover from
+    // a file that was written moments earlier in the same pipeline run. Null on any read failure
+    // is a deliberate fail-open: this is a defense-in-depth lock, not correctness-load-bearing
+    // for a single invocation, so a scratch project that cannot be parsed degrades to unlocked
+    // rather than failing the whole falsification.
+    private static string? ReadTargetProjectPath(string scratchProjectPath)
+    {
+        try
+        {
+            var document = XDocument.Load(scratchProjectPath);
+            return document.Descendants("ProjectReference").FirstOrDefault()?.Attribute("Include")?.Value;
+        }
+        catch (Exception ex) when (ex is System.Xml.XmlException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private static IReadOnlySet<string> GetRunDirectories(string scratchDirectory)

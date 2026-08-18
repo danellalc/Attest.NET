@@ -1,14 +1,19 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Attest.NET;
 
 /// <summary>
-/// A scratch directory belongs to exactly one candidate, but every stage (Synthesizer,
-/// Validator, Falsifier) can be asked to operate on it, and two operations against the same
-/// directory at once corrupt each other's build/test/mutation output. Serializes by path, both
-/// within this process (an in-memory semaphore, no polling) and across separate `attest`
-/// processes racing on the exact same content-hashed directory, e.g. two invocations over the
-/// same diff: those share no memory to synchronize with, so only a file lock reaches them.
+/// Serializes access to a shared resource identified by a path: a candidate's own scratch
+/// directory, but also (deliberately reusing the same primitive) the target project a scratch
+/// build's ProjectReference points at, whose obj/bin two unrelated scratch builds corrupt if
+/// they build it at once -- a real, reproduced failure (see PLANO.md) once two scratch projects
+/// referencing the same target raced inside one process; the same race reaches across separate
+/// `attest` processes too, since a candidate's own scratch directory is unique per candidate but
+/// the target project it references is not. Serializes by path, both within this process (an
+/// in-memory semaphore, no polling) and across separate processes: those share no memory to
+/// synchronize with, so only a file lock reaches them.
 /// </summary>
 internal static class ScratchDirectoryLocks
 {
@@ -16,15 +21,16 @@ internal static class ScratchDirectoryLocks
     private static readonly string CrossProcessLockDirectory = Path.Combine(Path.GetTempPath(), "attest-scratch", ".locks");
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(200);
 
-    public static async Task<IAsyncDisposable> AcquireAsync(string scratchDirectory, CancellationToken cancellationToken)
+    public static async Task<IAsyncDisposable> AcquireAsync(string path, CancellationToken cancellationToken)
     {
-        var semaphore = InProcessLocks.GetOrAdd(scratchDirectory, static _ => new SemaphoreSlim(1, 1));
+        var normalizedPath = Path.GetFullPath(path);
+        var semaphore = InProcessLocks.GetOrAdd(normalizedPath, static _ => new SemaphoreSlim(1, 1));
         await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         FileStream lockFile;
         try
         {
-            lockFile = await AcquireLockFileAsync(scratchDirectory, cancellationToken).ConfigureAwait(false);
+            lockFile = await AcquireLockFileAsync(normalizedPath, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -35,13 +41,20 @@ internal static class ScratchDirectoryLocks
         return new Lease(semaphore, lockFile);
     }
 
-    internal static string ComputeLockFilePath(string scratchDirectory) =>
-        Path.Combine(CrossProcessLockDirectory, $"{Path.GetFileName(scratchDirectory)}.lock");
+    // Hashed rather than taken from the file name verbatim: a candidate's own scratch directory
+    // name is already unique (content-hashed by Synthesizer), but a target project's .csproj
+    // path is not -- two different repos can both have a "Lib.csproj" -- so only hashing the
+    // full path guarantees two distinct resources never collide on the same lock file.
+    internal static string ComputeLockFilePath(string path)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path))))[..16].ToLowerInvariant();
+        return Path.Combine(CrossProcessLockDirectory, $"{hash}.lock");
+    }
 
-    private static async Task<FileStream> AcquireLockFileAsync(string scratchDirectory, CancellationToken cancellationToken)
+    private static async Task<FileStream> AcquireLockFileAsync(string normalizedPath, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(CrossProcessLockDirectory);
-        var lockPath = ComputeLockFilePath(scratchDirectory);
+        var lockPath = ComputeLockFilePath(normalizedPath);
 
         while (true)
         {

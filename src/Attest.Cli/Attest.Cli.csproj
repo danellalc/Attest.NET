@@ -23,6 +23,7 @@
     <ToolCommandName>attest</ToolCommandName>
     <PackageId>Attest.Cli</PackageId>
     <Description>The Attest.NET dotnet tool: `attest --diff` proposes and refutes property-based tests for your diff, `attest init` scaffolds attest.json, `attest doctor` checks the environment before anything costs money.</Description>
+    <PackageTags>dotnet-tool;property-based-testing;mutation-testing;llm;testing;cli</PackageTags>
   </PropertyGroup>
 
 </Project>

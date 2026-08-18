@@ -33,6 +33,21 @@ internal static class DiffCommand
             var config = AttestConfig.Load(repositoryRoot);
             var provider = ProviderFactory.Create(config);
 
+            // Checked here, not left to surface deep in Synthesizer: a typo'd --project against
+            // a diff that happens to be empty used to report a clean "0 proposed" success with
+            // no indication the path was wrong at all -- indistinguishable from "nothing
+            // changed." A typo'd path is always wrong regardless of what the diff contains, so
+            // it is checked unconditionally, before diff scope is even computed. Checked after
+            // config/provider setup, not before: those failures should surface on their own
+            // terms even when --project also happens to be wrong. Cancellation is checked
+            // first: File.Exists ignores the token entirely, and without this an
+            // already-cancelled run reported a plain "--project does not exist" failure
+            // instead of the cancelled exit code, for a --project value never actually reached.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!File.Exists(targetProjectPath))
+                throw new AttestCliException($"--project path '{targetProjectPath}' does not exist.");
+
             var runner = new AttestRunner(
                 new DiffScope(),
                 new Sanitizer(),

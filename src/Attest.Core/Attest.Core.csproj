@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Description>Language-agnostic core of Attest: the shared contracts (stage interfaces, funnel report, rejection reasons, exceptions) behind the propose-then-refute loop. Consumed by Attest.NET; not useful standalone until a second language adapter exists.</Description>
+    <PackageTags>property-based-testing;mutation-testing;testing</PackageTags>
   </PropertyGroup>
 
 </Project>

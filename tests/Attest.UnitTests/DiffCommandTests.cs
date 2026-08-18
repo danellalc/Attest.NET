@@ -70,6 +70,36 @@ public class DiffCommandTests
     }
 
     [Fact]
+    public async Task RunAsync_ProjectPathDoesNotExist_FailsWithNamedErrorInsteadOfSilentZeroProposed()
+    {
+        // A typo'd --project used to surface no feedback at all when the diff also happened to
+        // be empty: AttestRunner's own "0 proposed" early-return fires before Synthesizer ever
+        // gets a chance to notice the path is wrong, so the run reported a clean, indistinguishable
+        // success. Checked explicitly here instead, unconditional on what the diff contains.
+        var directory = Path.Combine(Path.GetTempPath(), $"attest-diffcommand-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory, "attest.json"), """
+                {"provider": "ollama", "model": "some-model"}
+                """);
+            var error = new StringWriter();
+
+            var exitCode = await DiffCommand.RunAsync(
+                ["--diff", "origin/main", "--project", "DoesNotExist.csproj", "--repo", directory],
+                TextWriter.Null, error, cancellationToken: CancellationToken.None);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("--project path", error.ToString());
+            Assert.Contains("does not exist", error.ToString());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_ExceptionMessageContainsUrlCredentials_SanitizesBeforePrinting()
     {
         // Caught by the audit: OpenAiCompatibleProvider is the one provider whose exception

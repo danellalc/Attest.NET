@@ -31,6 +31,7 @@ public sealed partial class Synthesizer : ISynthesizer
         string? customGeneratorsType = null)
     {
         ValidateCandidateName(candidate.Name);
+        customGeneratorsType = NormalizeCustomGeneratorsType(candidate.Name, customGeneratorsType);
 
         if (!File.Exists(targetProjectPath))
             throw new AttestSynthesisFailedException(candidate.Name, $"Target project not found at '{targetProjectPath}'.");
@@ -93,11 +94,33 @@ public sealed partial class Synthesizer : ISynthesizer
             BuildTestFile(testClassName, candidate, customGeneratorsType),
             cancellationToken).ConfigureAwait(false);
 
-        var buildResult = await ProcessRunner.RunAsync(
-            "dotnet",
-            ["build", csprojPath, "-c", "Release"],
-            scratchDirectory,
-            cancellationToken).ConfigureAwait(false);
+        // The scratch .csproj's ProjectReference points MSBuild at the real target project on
+        // disk, so this build also builds the target project in place -- into ITS OWN obj/bin,
+        // a location ScratchDirectoryLocks' scratch-directory lock above never names. Two
+        // unrelated scratch builds (different candidates, hence different scratch directories,
+        // hence no contention on that lock) referencing the SAME target project corrupt each
+        // other's build of it if they race; this second lock, on the target project path
+        // itself, is what actually prevents that. Acquired only around the build call, not the
+        // whole method, so a cache hit above never pays for it.
+        IAsyncDisposable targetLockHandle;
+        try
+        {
+            targetLockHandle = await ScratchDirectoryLocks.AcquireAsync(targetProjectPath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new AttestSynthesisFailedException(candidate.Name, $"Could not acquire the target project lock: {ex.Message}");
+        }
+
+        ProcessResult buildResult;
+        await using (targetLockHandle)
+        {
+            buildResult = await ProcessRunner.RunAsync(
+                "dotnet",
+                ["build", csprojPath, "-c", "Release"],
+                scratchDirectory,
+                cancellationToken).ConfigureAwait(false);
+        }
 
         if (!buildResult.Succeeded)
             throw new AttestSynthesisFailedException(candidate.Name, buildResult.CombinedOutput);
@@ -118,6 +141,38 @@ public sealed partial class Synthesizer : ISynthesizer
 
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
     private static partial Regex ValidCandidateNamePattern();
+
+    // Blank is treated as absent, the same as every other optional string field in AttestConfig
+    // (jsonMode included): a value pasted-but-not-filled-in from
+    // examples/custom-generators/attest.json.example should behave exactly like the field being
+    // omitted, not silently reuse a stale null-built cache entry or produce invalid generated
+    // code (customGeneratorsType ?? "" in ComputeScratchDirectory would otherwise hash a blank
+    // value identically to "unset", while PropertiesAttribute would still treat it as "set" and
+    // emit typeof() with no argument).
+    //
+    // A non-blank value comes from attest.json -- config the user controls, but which a fork-PR
+    // could still modify ahead of a CI run -- and unlike candidate.Name (the LLM's output,
+    // already validated above), this one was spliced into typeof(...) with no check at all
+    // until this was found in a pre-launch adversarial review: a value containing C# syntax
+    // metacharacters breaks out of the typeof(...) argument position and can splice arbitrary
+    // text into the compiled shape of the generated test. Restricting it to the same shape a
+    // real dotted type name can ever have closes that off deterministically, the same way
+    // ValidCandidateNamePattern does for candidate.Name.
+    internal static string? NormalizeCustomGeneratorsType(string candidateName, string? customGeneratorsType)
+    {
+        if (string.IsNullOrWhiteSpace(customGeneratorsType))
+            return null;
+
+        if (!ValidCustomGeneratorsTypePattern().IsMatch(customGeneratorsType))
+            throw new AttestSynthesisFailedException(
+                candidateName,
+                $"attest.json's customGeneratorsType '{customGeneratorsType}' is not a valid fully qualified type name. Must match {ValidCustomGeneratorsTypePattern()}.");
+
+        return customGeneratorsType;
+    }
+
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")]
+    private static partial Regex ValidCustomGeneratorsTypePattern();
 
     private static string ComputeScratchDirectory(PropertyCandidate candidate, string testClassName, string targetProjectPath, string? customGeneratorsType)
     {

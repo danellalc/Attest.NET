@@ -157,6 +157,51 @@ public class SynthesizerTests
         Assert.Equal(expected, Synthesizer.TargetNamespace(targetProjectPath));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void NormalizeCustomGeneratorsType_BlankOrMissing_ReturnsNull(string? blank)
+    {
+        // A value pasted-but-not-filled-in from examples/custom-generators/attest.json.example
+        // (or a field present but left empty) must behave exactly like the field being omitted:
+        // no error, no custom generator applied -- not a validation failure, and not a "set but
+        // empty" state that reaches PropertiesAttribute's typeof(...) splice.
+        Assert.Null(Synthesizer.NormalizeCustomGeneratorsType("SomeCandidate", blank));
+    }
+
+    [Theory]
+    [InlineData("MyProject.Testing.MoneyGenerators")]
+    [InlineData("Generators")]
+    [InlineData("_Leading.Under_score123")]
+    public void NormalizeCustomGeneratorsType_ValidDottedTypeName_ReturnsItUnchanged(string valid)
+    {
+        Assert.Equal(valid, Synthesizer.NormalizeCustomGeneratorsType("SomeCandidate", valid));
+    }
+
+    [Theory]
+    [InlineData("object)])] public class Pwn { }//")] // breaks out of typeof(...) and splices a new declaration
+    [InlineData("Foo, Bar")]
+    [InlineData("Foo Bar")]
+    [InlineData("Foo\nBar")]
+    [InlineData("Foo.")]
+    [InlineData(".Foo")]
+    [InlineData("123StartsWithDigit")]
+    public void NormalizeCustomGeneratorsType_SyntaxBreakingValue_ThrowsNamedException(string malicious)
+    {
+        // customGeneratorsType is spliced unescaped into typeof({customGeneratorsType}) in the
+        // generated test (PropertiesAttribute) -- found in a pre-launch adversarial review that,
+        // unlike candidate.Name (the LLM's own output, validated via ValidCandidateNamePattern
+        // before the same kind of splice), this config-sourced value was trusted as-is. A value
+        // containing C# syntax metacharacters can corrupt or fully hijack the compiled shape of
+        // the generated file for every candidate in the run.
+        var exception = Assert.Throws<AttestSynthesisFailedException>(
+            () => Synthesizer.NormalizeCustomGeneratorsType("SomeCandidate", malicious));
+
+        Assert.Equal("SomeCandidate", exception.CandidateName);
+        Assert.Contains("customGeneratorsType", exception.BuildOutput);
+    }
+
     [Fact]
     public async Task SynthesizeAsync_GeneratedScratchProject_IsWellFormedXmlWithATargetNamespaceUsing()
     {
