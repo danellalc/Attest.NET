@@ -15,6 +15,7 @@
     <RepositoryUrl>https://github.com/danellalc/Attest.NET</RepositoryUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
 
 </Project>

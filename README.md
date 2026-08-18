@@ -4,14 +4,14 @@ Property-based tests that carry proof. Attest proposes properties for the code y
 
 > Status: in development. This README describes the design being built; see the [roadmap](ARCHITECTURE.md#roadmap).
 
-> [GIF placeholder: recording pending. The numbers below are from a real run, not invented —
-> see the exact reproduction steps at the bottom of this section.]
+![Attest running against CliWrap: 2 proposed, 1 delivered, 1 rejected](assets/demo.gif)
+
+The numbers above are from a real run, not invented — see the exact reproduction steps below, or the same transcript as text:
 
 ```
 $ attest --diff 13bc13d~1 --project CliWrap/CliWrap.csproj
 
 Attest: 2 proposed, 1 delivered, 1 rejected, 0 quarantined.
-[##############################]
 
 Delivered:
   [OK] DeconstructMatchesProperties: Deconstructing a BufferedCommandResult yields the same values as its ExitCode, StandardOutput and StandardError properties.
