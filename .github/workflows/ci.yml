@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # Attest.IntegrationTests runs real dotnet-stryker mutation runs, not mocked ones -- the
+      # same tool `attest doctor` checks for and the real product depends on.
+      - name: Install dotnet-stryker
+        run: dotnet tool install -g dotnet-stryker
+
+      # Integration tests build their own throwaway git repos and mostly pass identity inline
+      # per-commit, but a global fallback avoids "please tell me who you are" on anything that
+      # doesn't.
+      - name: Configure a git identity for integration tests
+        run: |
+          git config --global user.email "ci@attest.invalid"
+          git config --global user.name "Attest CI"
+
+      - name: dotnet test
+        run: dotnet test

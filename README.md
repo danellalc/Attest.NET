@@ -1,5 +1,8 @@
 # Attest
 
+[![CI](https://github.com/danellalc/Attest.NET/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/danellalc/Attest.NET/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/Attest.Cli.svg)](https://www.nuget.org/packages/Attest.Cli)
+
 Property-based tests that carry proof. Attest proposes properties for the code you changed, then tries to prove each one worthless: against your real code and against mutants of it. **You only see the survivors, each one shipped with the mutant it killed.**
 
 > Status: in development. This README describes the design being built; see the [roadmap](ARCHITECTURE.md#roadmap).
